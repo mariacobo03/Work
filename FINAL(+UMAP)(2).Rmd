@@ -1,0 +1,1364 @@
+---
+title: "**Home Assignment 4: PCA, tSNE & UMAP <br><font color='#F48225' size='5'>Data visualization (Course 2023/2024)**</font>"
+author: "<font color='#A8A8A8' size='3'>Bachelor’s Degree in Bioinformatics</font>"
+date: "<font color='#A8A8A8' size='3'>November 2023</font>"
+output:
+  html_document:
+    theme: yeti
+    css: https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.11.2/css/all.css
+    self_contained: yes
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, fig.width = 6, fig.height = 4, fig.align = "center")
+```
+
+
+```{=html}
+<style>
+  .fig {width: 50%}
+  @import url(https://fonts.googleapis.com/css?family=Fira+Sans:300,300i,400,400i,500,500i,700,700i);
+  @import url(https://cdn.rawgit.com/tonsky/FiraCode/1.204/distr/fira_code.css);
+
+.center {
+  text-align: center;
+}
+
+.code_box {
+  padding: 1em 1em 1em 1em;
+  background: white;
+  color: #222222;
+  border: 2px solid #222222;
+  border-radius: 10px;
+  margin-bottom: 10px;
+}
+
+.alternative_box {
+  padding: 1em;
+  background: white;
+  color: red4;
+  border: 2px solid red;
+  border-radius: 10px;
+  margin-bottom: 10px;
+}
+
+.question_box {
+  padding: 1em;
+  background: white;
+  color: red4;
+  border: 2px solid blue;
+  border-radius: 10px;
+  margin-bottom: 10px;
+}
+
+</style>
+```
+
+:::: {.question_box data-latex=""}
+
+**QUESTION #1: Load, adapt the data and create metadata**
+- Load the four different replicates provided as separate files into separate variables.
+- Check data is correctly loaded, and all samples have the same dimensions.
+- Remember to adapt the data accordingly. We need columns of the tables to represent variables (genes) and rows to be samples. Also, we need to merge all tables of observations. Check all samples are in the same order.
+- Create a meta data dataframe containing information regarding replicate, strains and time points. Information is either included in the sample name or in the introduction to the dataset stated above.
+
+::::
+
+### Load data 
+
+```{r message=FALSE, cache=TRUE}
+# --------------------------
+## [#1] Read the data
+# --------------------------
+
+R1_data <- read.csv("data/rep1.csv", row.names = 1)
+R2_data <- read.csv("data/rep2.csv", row.names = 1)
+R3_data <- read.csv("data/rep3.csv", row.names = 1)
+R4_data <- read.csv("data/rep4.csv", row.names = 1)
+
+# Observe the data:
+head(R1_data[,1:5])
+head(R2_data[,1:5])
+head(R3_data[,1:5])
+head(R4_data[,1:5])
+```
+
+**Check for duplicates in our data:**
+```{r}
+length(colnames(R1_data)) == length(colnames(R2_data)) && length(colnames(R2_data)) == length(colnames(R3_data)) && length(colnames(R3_data)) == length(colnames(R4_data))
+```
+
+```{r, cache=TRUE}
+# --------------------------
+## [#2] Adapt the data
+# --------------------------
+X1 <- t(R1_data)
+X2 <- t(R2_data)
+X3 <- t(R3_data)
+X4 <- t(R4_data)
+
+## Merge
+X <- rbind(X1, X2, X3, X4)
+
+## Check if all samples are in the same order
+all(rownames(R1_data) == rownames(R2_data) & rownames(R2_data) == rownames(R3_data) & rownames(R3_data) == rownames(R4_data))
+
+## Check the data:
+dim(X1)
+dim(X2)
+dim(X3)
+dim(X4)
+dim(X)
+```
+
+### Get metadata associated:
+
+```{r get_data}
+# --------------------------
+## [#3] Load the metadata
+# --------------------------
+metadata <- data.frame(
+  row.names = row.names(X),
+  Strain = gsub("(.*)\\.t[0-9]+_rep[0-9]+", "\\1", rownames(X)),
+  Time_Point = as.factor(gsub(".*\\.t([0-9]+)_rep[0-9]+", "\\1", rownames(X))),
+  Replicate = as.factor(gsub(".*_rep([0-9]+)", "\\1", rownames(X))),
+  Total_Expression = rowSums(X)
+)
+metadata$Strain <- as.factor(metadata$Strain)
+
+head(metadata)
+```
+
+
+:::: {.question_box data-latex=""}
+
+**QUESTION #2: PCA representation**
+- Represent the data with a PCA projection: non-scaled, scaled, normalized.
+- Argue whether batch effects are present between the 4 replicates.
+- Remove outliers if necessary.
+- Show the different steps in the process and comparison with raw-data and normalized.
+- Scale or normalize data appropriately.
+- Identify and show any correlation with expression if necessary.
+
+::::
+
+```{r, message=FALSE}
+# Upload libraries
+library(ggfortify)
+library(factoextra)
+library(dplyr)
+library(umap)
+```
+
+```{r}
+## PCA NOT SCALED
+pca_res <- prcomp(X, scale=FALSE)
+
+# Basic plot
+plot(pca_res$x)
+```
+
+## Factoextra {.tabset }
+
+### By Strain
+```{r}
+fviz_pca_ind(pca_res, geom.ind = "point", col.ind = metadata$Strain, addEllipses = TRUE)
+```
+
+### By Replicate 
+```{r}
+fviz_pca_ind(pca_res, geom.ind = "point", col.ind = metadata$Replicate, addEllipses = TRUE)
+```
+
+### By Time Point 
+```{r}
+fviz_pca_ind(pca_res, geom.ind = "point", col.ind = metadata$Time_Point, addEllipses = TRUE) 
+```
+
+## {-} 
+
+## Autoplot {.tabset }
+
+### By Strain
+```{r}
+autoplot(pca_res, data=metadata, colour="Strain", title = "PCA - Color by Strain") + theme_classic()
+```
+
+### By Replicate 
+```{r}
+autoplot(pca_res, data=metadata, colour="Replicate", title = "PCA - Color by Replicate") + theme_classic()
+```
+
+### By Time Point 
+```{r}
+autoplot(pca_res, data=metadata, colour="Time_Point", title = "PCA - Color by Time Point") + theme_classic() 
+```
+
+## {-} 
+
+## Baseplot {.tabset }
+
+### By Strain
+```{r}
+plot(pca_res$x, pch=19, col=metadata$Strain, main = "PCA - Color by Strain", xlab = "PC1", ylab = "PC2")
+legend("topright", legend = levels(metadata$Strain), col = unique(metadata$Strain), pch = 19)
+```
+
+### By Replicate 
+```{r}
+plot(pca_res$x, pch=19, col=metadata$Replicate, main = "PCA - Color by Replicate", xlab = "PC1", ylab = "PC2")
+legend("topright", legend = levels(metadata$Replicate), col = unique(metadata$Replicate), pch = 19)
+```
+
+### By Time Point 
+```{r}
+plot(pca_res$x, pch=19, col=metadata$Time_Point, main = "PCA - Color by Time Point", xlab = "PC1", ylab = "PC2")
+legend("topright", legend = levels(metadata$Time_Point), col = unique(metadata$Time_Point), pch = 19)
+```
+
+## {-} 
+
+::: {.code_box data-latex=""}
+Firstly, we have done different plots using a PCA projection without scaled data. We have colored each plot with a different variable to observe how the PCA differs between Strains, Replicates and Time Points. We observe a trend where samples are distributed from the middle zone of PC2 and bifurcates in diagonal between replicates, being A PC2 positive and B PC2 negative. We are able to observe some clusters between the same Strain, Replicate and Time Point, even though we have an outlier of Strain B, Replicate 3 and Time Point 3. This outlier is situated near the 0.0 value of PC2. 
+::: 
+
+## Plot coefficients {.tabset }
+
+### Without scaling
+```{r var_explained, cache=TRUE}
+fviz_eig(pca_res, addlabels = TRUE, main = "Principal components: Variance explained")
+```
+
+### PCA scaled
+```{r var_explained1, cache=TRUE}
+pca_scaled <- prcomp(X, scale = TRUE)
+fviz_eig(pca_scaled, addlabels = TRUE, main = "Principal components: Variance explained: PCA scaled")
+```
+
+## {-} 
+
+::: {.code_box data-latex=""}
+We observe a slightly difference between the principal component variance of not scaled and scaled. Basically, when we have not scale all the dimensions from 4 to 10 are equal to 0%, while in the case of scale the value is increased a little bit. This percentage increase is taken out from dimension 1 and 2 and spread through the other dimensions in decreasing order.
+:::
+
+**PCA SCALED**
+
+```{r}
+plot(pca_scaled$x)
+```
+
+## Factoextra {.tabset }
+
+### By Strain
+```{r}
+fviz_pca_ind(pca_scaled, geom.ind = "point", col.ind = metadata$Strain, addEllipses = TRUE)
+```
+
+### By Replicate 
+```{r}
+fviz_pca_ind(pca_scaled, geom.ind = "point", col.ind = metadata$Replicate, addEllipses = TRUE)
+```
+
+### By Time Point 
+```{r}
+fviz_pca_ind(pca_scaled, geom.ind = "point", col.ind = metadata$Time_Point, addEllipses = TRUE) 
+```
+
+## {-} 
+
+## Autoplot {.tabset }
+
+### By Strain
+```{r}
+autoplot(pca_scaled, data=metadata, colour="Strain", title = "PCA - Color by Strain") + theme_classic()
+```
+
+### By Replicate 
+```{r}
+autoplot(pca_scaled, data=metadata, colour="Replicate", title = "PCA - Color by Replicate") + theme_classic()
+```
+
+### By Time Point 
+```{r}
+autoplot(pca_scaled, data=metadata, colour="Time_Point", title = "PCA - Color by Time Point") + theme_classic()
+```
+
+## {-} 
+
+## Baseplot {.tabset }
+
+### By Strain
+```{r}
+plot(pca_scaled$x, pch=19, col=metadata$Strain, main = "PCA - Color by Strain", xlab = "PC1", ylab = "PC2")
+legend("topright", legend = levels(metadata$Strain), col = unique(metadata$Strain), pch = 19)
+```
+
+### By Replicate 
+```{r}
+plot(pca_scaled$x, pch=19, col=metadata$Replicate, main = "PCA - Color by Replicate", xlab = "PC1", ylab = "PC2")
+legend("topright", legend = levels(metadata$Replicate), col = unique(metadata$Replicate), pch = 19)
+```
+
+### By Time Point 
+```{r}
+plot(pca_scaled$x, pch=19, col=metadata$Time_Point, main = "PCA - Color by Time Point", xlab = "PC1", ylab = "PC2")
+legend("topright", legend = levels(metadata$Time_Point), col = unique(metadata$Time_Point), pch = 19)
+```
+
+## {-} 
+
+::: {.code_box data-latex=""}
+We have scaled all the values of our data and we have done again all the corresponding plots. We are not able to observe a big difference between not scale and scale but there is some. We continue having the clusters as before and the outlier is still there. 
+
+Then, we want to take out the outlier of our data. As we know, we only have one sample that is an outlier, so in order to take it out, we will do it by eliminating the corresponding row. As we know which sample name corresponds to the outlier (B.t1_rep3) we only have to delete it. We have to take into account that in the metadata is also included so we have also to eliminate from there.
+:::
+
+**Take outliers:**
+```{r}
+dim(X)
+X <- X[-31, , drop = FALSE]
+metadata <- metadata[-31, , drop = FALSE]
+dim(X)
+```
+
+**Plot with outliers:**
+```{r}
+plot(pca_scaled$x, pch=19, col=metadata$Replicate, main = "PCA - Color by Replicate", xlab = "PC1", ylab = "PC2")
+legend("topright", legend = levels(metadata$Replicate), col = unique(metadata$Replicate), pch = 19)
+```
+
+
+## Without Scaling and without outliers {.tabset }
+
+### By Strain
+```{r}
+pca_res <- prcomp(X, scale=FALSE)
+autoplot(pca_res, data=metadata, colour="Strain", title = "PCA - Color by Strain") + theme_classic()
+```
+
+### By Replicate 
+```{r}
+autoplot(pca_res, data=metadata, colour="Replicate", title = "PCA - Color by Replicate") + theme_classic()
+```
+
+### By Time Point 
+```{r}
+autoplot(pca_res, data=metadata, colour="Time_Point", title = "PCA - Color by Time Point") + theme_classic() 
+```
+
+## {-} 
+
+## PCA scaled without outliers {.tabset }
+
+### By Strain
+```{r}
+pca_scaled <- prcomp(X, scale = TRUE)
+autoplot(pca_scaled, data=metadata, colour="Strain", title = "PCA - Color by Strain") + theme_classic()
+```
+
+### By Replicate 
+```{r}
+autoplot(pca_scaled, data=metadata, colour="Replicate", title = "PCA - Color by Replicate") + theme_classic()
+```
+
+### By Time Point 
+```{r}
+autoplot(pca_scaled, data=metadata, colour="Time_Point", title = "PCA - Color by Time Point") + theme_classic() 
+```
+
+## {-} 
+
+::: {.code_box data-latex=""}
+After we take the outlier, we have done the plots again and know we are able to observe only the important data. In that way, that outlier cannot distort the results and conclusions drawn from the data.
+:::
+
+**Understanding the batch effect**
+
+## Total expression {.tabset }
+
+### By Strain
+```{r}
+plot(metadata$Total_Expression, type ="h", col=metadata$Strain)
+```
+
+### By Replicate
+```{r}
+plot(metadata$Total_Expression, type ="h", col=metadata$Replicate)
+```
+
+### Using ggplot
+```{r}
+ggplot(as.data.frame(pca_scaled$x), aes(x = PC1, y =PC2, color = metadata$Total_Expression)) + 
+  geom_point() +
+  scale_color_gradient(name = "Total expression", low = "green", high = "red") +
+  theme_classic()
+```
+
+## {-} 
+
+:::: {.alternative_box data-latex=""}
+## CODE ALTERNATIVES {.tabset }
+
+### By Strain
+```{r}
+ggplot(data = metadata, aes(x=rownames(X), y=Total_Expression, fill=Strain)) + 
+  geom_bar(stat='identity') + 
+  theme_classic() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  labs(x = "Row names")
+```
+
+### By Replicate
+```{r}
+ggplot(data = metadata, aes(x=rownames(X), y=Total_Expression, fill=Replicate)) + 
+  geom_bar(stat='identity') + 
+  theme_classic() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  labs(x = "Row names")
+```
+
+### By Time Point
+```{r}
+ggplot(data = metadata, aes(x=rownames(X), y=Total_Expression, fill=Time_Point)) + 
+  geom_bar(stat='identity') + 
+  theme_classic() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) + 
+  labs(x = "Row names")
+```
+
+### Total Expression
+```{r}
+ggplot(data = metadata, aes(x=rownames(X), y=Total_Expression, fill = Total_Expression)) + 
+  geom_bar(stat='identity') + 
+  theme_classic() +
+  scale_fill_gradient(low="green", high = "red") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) + 
+  labs(x="Row names")
+```
+
+## {-} 
+
+::::
+
+::: {.code_box data-latex=""}
+We need to find a variable that highly correlates with expression. We check for the total gene expression per sample. Replicates are very different but we observe that Strain B has higher total expression. Moreover, specially Replicates 4 are the ones with the higher total expression. Once we know this, we observe that this samples are mostly on the right down of the plot. This means that a sample that is on the left of PC1 will have low expression. Symmetrically if a sample is on the right it will have high expression of all genes. We can also check for significant correlations.
+:::
+
+**Check if there are significant correlations:**
+```{r}
+plot(rowSums(X), pca_scaled$x[,1])
+
+pca_points <- as_tibble(pca_scaled$x) %>% bind_cols(metadata) %>% as.data.frame()
+pca_points$exprs <- rowSums(X)
+pc1_mod <- lm(PC1 ~ exprs, pca_points)
+summary(pc1_mod)
+```
+
+::: {.code_box data-latex=""}
+We know there is correlation between PC1 and total expression because the p-value is very low.
+:::
+
+```{r}
+autoplot(pca_scaled, data=metadata, colour= "Total_Expression", shape="Replicate") +
+  theme_classic() + 
+  scale_color_gradient(low="green", high = "red")
+```
+
+::: {.code_box data-latex=""}
+We observe that now, there is no batch effect between replicates because in all clusters we have samples from different replicates.
+::: 
+
+## Using normalized data {.tabset }
+
+### By Strain
+```{r}
+Y = X/rowSums(X)
+pca_norm <- prcomp(Y, scale=TRUE)
+
+autoplot(pca_norm, data=metadata, colour="Strain") + theme_classic()
+```
+
+### By Replicate
+```{r}
+autoplot(pca_norm, data=metadata, colour="Replicate") + theme_classic()
+```
+
+### By Time Point
+```{r}
+autoplot(pca_norm, data=metadata, colour="Time_Point") + theme_classic()
+```
+
+## {-} 
+
+:::: {.alternative_box data-latex=""}
+## CODE ALTERNATIVES {.tabset }
+
+### By Strain
+```{r}
+plot(pca_norm$x, pch=19, col=metadata$Strain)
+legend("topright", legend = levels(metadata$Strain), col = 1:length(levels(metadata$Strain)), pch = 19)
+```
+
+### By Replicate
+```{r}
+plot(pca_norm$x, pch=19, col=metadata$Replicate)
+legend("bottomright", legend = levels(metadata$Replicate), col = 1:length(levels(metadata$Replicate)), pch = 19, cex = 0.8)
+```
+
+### By Time Point
+```{r}
+plot(pca_norm$x, pch=19, col=metadata$Time_Point)
+legend("bottomright", legend = levels(metadata$Time_Point), col = 1:length(levels(metadata$Time_Point)), pch = 19, cex = 0.8)
+```
+
+## {-} 
+::::
+
+::: {.code_box data-latex=""}
+Finally, we obtained the plots after normalizing the data and we are able to observe the differences between raw data and this new plots. While with raw data the the values where spread horizontally in the normalized data are vertically having the strain A in the PC1 negative and strain B in PC1 positive. Now, the replicates are not clustered with the same number of replicate instead they are mixed with the other replicates assuring us the batch effect is correct. 
+:::
+
+:::: {.question_box data-latex=""}
+
+**QUESTION #3: tSNE representation**
+- Represent the data with a tSNE projection: raw data and normalized.
+- Again, argue whether batch effects are present between the 4 replicates.
+- Remove outliers if necessary. Scale or normalize data appropriately.
+- Show the different steps in the process and comparison with raw-data and normalized.
+
+::::
+
+```{r, echo=FALSE}
+X <- rbind(X1, X2, X3, X4)
+metadata <- data.frame(
+  row.names = row.names(X),
+  Strain = gsub("(.*)\\.t[0-9]+_rep[0-9]+", "\\1", rownames(X)),
+  Time_Point = as.factor(gsub(".*\\.t([0-9]+)_rep[0-9]+", "\\1", rownames(X))),
+  Replicate = as.factor(gsub(".*_rep([0-9]+)", "\\1", rownames(X))),
+  Total_Expression = rowSums(X)
+)
+metadata$Strain <- as.factor(metadata$Strain)
+```
+
+## Raw data {.tabset }
+
+### By Strain
+```{r load_tSNE, cache=FALSE}
+library(Rtsne)
+
+# Raw data 
+tsne1 <- Rtsne(X, perplexity = 15)
+
+plot(tsne1$Y, col = metadata$Strain, main = "tSNE 2D plot: Coloured by Strain")
+legend("topright", pch=1, col=unique(metadata$Strain), legend = levels(metadata$Strain))
+```
+
+### By Time Point 
+```{r}
+plot(tsne1$Y, col = metadata$Time_Point, main = "tSNE 2D plot: Coloured by Time_point")
+legend("topright", pch=1, col=unique(metadata$Time_Point), legend = levels(metadata$Time_Point))
+```
+
+### By Replicate
+```{r}
+plot(tsne1$Y, col = metadata$Replicate, main = "tSNE 2D plot: Coloured by Replicate")
+legend("topright", pch=1, col=unique(metadata$Replicate), legend = levels(metadata$Replicate))
+```
+
+## {-} 
+
+:::: {.alternative_box data-latex=""}
+## CODE ALTERNATIVES USING GGPLOT {.tabset }
+
+###  By Strain and Replicate
+```{r}
+tsne_plot <- data.frame(x = tsne1$Y[,1], 
+                        y = tsne1$Y[,2], 
+                        col = metadata$Strain)
+
+ggplot(tsne_plot) + 
+  geom_point(aes(x=x, y=y, color=metadata$Strain, shape = metadata$Replicate)) +
+  theme_classic() +
+  labs(title = "tSNE 2D plot: Strain vs Replicate", x = "tSNE1", y = "tSNE2", color = "Strain", shape = "Replicate") + 
+  scale_shape_manual(values = c(3, 15, 16, 17)) 
+```
+
+### By Strain and Time Point
+```{r}
+ggplot(tsne_plot) + 
+  geom_point(aes(x=x, y=y, color=metadata$Strain, shape = metadata$Time_Point)) +
+  theme_classic() +
+  labs(title = "tSNE 2D plot: Strain vs Time_point", x = "tSNE1", y = "tSNE2", color = "Strain", shape = "Time_point") + 
+  scale_shape_manual(values = c(3, 15, 16, 17, 18, 8))
+```
+
+## {-} 
+::::
+
+## Normalized data without outliers {.tabset }
+
+### By Strain
+```{r}
+X <- X[-31, , drop = FALSE]
+metadata <- metadata[-31, , drop = FALSE]
+X=X[, colSums(X)>0]
+Y = X/rowSums(X)
+
+tsne_norm <- Rtsne(Y, pca = TRUE, perplexity = 15)
+
+plot(tsne_norm$Y, col = metadata$Strain, main = "tSNE 2D plot: Coloured by Strain")
+legend("topright", pch=1, col=unique(metadata$Strain), legend = levels(metadata$Strain))
+```
+
+### By Time Point 
+```{r}
+plot(tsne_norm$Y, col = metadata$Time_Point, main = "tSNE 2D plot: Coloured by Time_point")
+legend("topright", pch=1, col=unique(metadata$Time_Point), legend = levels(metadata$Time_Point))
+```
+
+### By Replicate
+```{r}
+plot(tsne_norm$Y, col = metadata$Replicate, main = "tSNE 2D plot: Coloured by Replicate")
+legend("topright", pch=1, col=unique(metadata$Replicate), legend = levels(metadata$Replicate))
+```
+
+### Using ggplot
+```{r}
+tsne_plot <- data.frame(x = tsne_norm$Y[,1], 
+                        y = tsne_norm$Y[,2], 
+                        col = metadata$Strain)
+
+ggplot(tsne_plot) + 
+  geom_point(aes(x=x, y=y, color=metadata$Strain, shape = metadata$Replicate)) +
+  theme_classic() +
+  labs(title = "tSNE 2D plot: I", x = "tSNE1", y = "tSNE2", color = "Strain", shape = "Replicate") + 
+  scale_shape_manual(values = c(3, 15, 16, 17)) 
+```
+
+## {-} 
+
+::: {.code_box data-latex=""}
+Here we have represent the data with a tSNE projection (raw data and normalized). In the raw data we can see four different clusters for the four different replicates. And, as we can see these four clusters of the replicates, we can say that there is a batch effect in the raw data. However, when we normalize the data, we can now see that the replicates are mixed and we just see two clusters of Strain A and Strain B. Moreover, when we use the normalized data we have also removed outliers to observe directly the results. 
+:::
+
+:::: {.question_box data-latex=""}
+
+**QUESTION #4: tSNE parameters**
+Test the effect of reproducibility, perplexity and iterations. Use normalized dataset only.
+Provide comments and thoughts about it.
+
+::::
+
+## Reproducibility with Normalized data {.tabset }
+
+### By Strain
+```{r}
+Y = X/rowSums(X)
+tsne_norm <- Rtsne(Y, pca = TRUE, perplexity = 15)
+
+plot(tsne_norm$Y, col = metadata$Strain, main = "tSNE 2D plot: Coloured by Strain")
+legend("topright", pch=1, col=unique(metadata$Strain), legend = levels(metadata$Strain))
+```
+
+### By Time Point 
+```{r}
+plot(tsne_norm$Y, col = metadata$Time_Point, main = "tSNE 2D plot: Coloured by Time_point")
+legend("topright", pch=1, col=unique(metadata$Time_Point), legend = levels(metadata$Time_Point))
+```
+
+### By Replicate
+```{r}
+plot(tsne_norm$Y, col = metadata$Replicate, main = "tSNE 2D plot: Coloured by Replicate")
+legend("topright", pch=1, col=unique(metadata$Replicate), legend = levels(metadata$Replicate))
+```
+
+### Using ggplot
+```{r}
+tsne_plot <- data.frame(x = tsne_norm$Y[,1], 
+                        y = tsne_norm$Y[,2], 
+                        col = metadata$Strain)
+
+ggplot(tsne_plot) + 
+  geom_point(aes(x=x, y=y, color=metadata$Strain, shape = metadata$Replicate)) +
+  theme_classic() +
+  labs(title = "tSNE 2D plot: Color vs Strain", x = "tSNE1", y = "tSNE2", color = "Strain", shape = "Replicate") + 
+  scale_shape_manual(values = c(3, 15, 16, 17))
+```
+
+## {-} 
+
+::: {.code_box data-latex=""}
+After running tSNE a couple times, we compare the results and we can see that the distribution of each point is not the same. This occurs because the plots have different starting points, a different origin. Although the plots are not the same, they hold the same conclusions.
+:::
+
+```{r}
+# Perplexity
+
+Y = X/rowSums(X)
+set.seed(123) ## allows us to reproduce results
+
+list_plots_pp <- list()
+for (perplexity in c(1, 5, 10, 15)) {
+  
+  tsne_pp <- Rtsne(Y, pca = TRUE, perplexity = perplexity)
+  
+  tsne_data2 <- as.data.frame(tsne_pp$Y)
+  tsne_data2$Strain <- metadata$Strain
+  tsne_data2$Time_point <- metadata$Time_Point
+  tsne_data2$Replicate <- metadata$Replicate
+  
+  # ggplot
+  plot_pp <- ggplot(tsne_data2, aes(x=V1, y=V2)) +
+    geom_point(aes(color=Time_point, shape=Replicate)) +
+    scale_shape_manual(values = c(3, 15, 16, 17)) +
+    ggtitle(paste0("tSNE 2D plot: perplexity value = ", perplexity)) + 
+    labs(x = "tSNE1", y = "tSNE2") +
+    theme_classic()
+  
+  print(plot_pp)
+  list_plots_pp[[paste0("perplexity", perplexity)]] = plot_pp
+  }
+```
+
+```{r}
+library(gridExtra)
+ggpubr::ggarrange(plotlist = list_plots_pp, common.legend = TRUE)
+```
+
+The maximum value of perplexity for our data set is 15 this is because the perplexity parameter should not be bigger than 3 * perplexity < nrow(X) - 1. 
+
+```{r}
+pp_max = nrow(X) - 1
+pp_max
+```
+```{r}
+3*16 < pp_max
+```
+
+Once the perplexity number is above the value 15, 3*perplexity will be bigger than our number of rows minus one and we will get an error. 
+
+::: {.code_box data-latex=""}
+The perplexity says how to balance attention between local and global aspects of your data and it is a guess about the number of close neighbors each point has. So, each time we increase the value of perplexity, we are able to distinguish better and better the clusters. 
+
+With this data, if we set the perplexity to the default value (30) we obtain an error (as shown above) and so trying with different values, we have obtained that 15 is the maximum value of perplexity that this data can have. However, if we observe the resulting plots, we observe that the most suitable value for perplexity is 5. With perplexity 5 we can see two clusters for the two strains and in these we can see six groups for the different time points and in each time pint group, the four replicates. We cannot see any batch effect. 
+
+Therefore, for the following UMAP plots we will be setting the perplexity value to 5. 
+:::
+
+```{r}
+# Maximum iterations 
+
+Y = X/rowSums(X)
+set.seed(123)
+
+list_plots_max <- list()
+for (max_iter in c(1, 10, 100, 500, 1000)) {
+  
+  tsne_pp <- Rtsne(Y, pca = TRUE, max_iter = max_iter, perplexity = 15)
+  
+  tsne_data2 <- as.data.frame(tsne_pp$Y)
+  tsne_data2$Strain <- metadata$Strain
+  tsne_data2$Time_point <- metadata$Time_Point
+  tsne_data2$Replicate <- metadata$Replicate
+  
+  # ggplot
+  plot_max <- ggplot(tsne_data2, aes(x=V1, y=V2)) +
+    geom_point(aes(color=Strain, shape=Replicate)) +
+    scale_shape_manual(values = c(3, 15, 16, 17)) +
+    ggtitle(paste0("tSNE 2D plot: max_iter = ", max_iter)) + 
+    labs(x = "tSNE1", y = "tSNE2") +
+    theme_classic()
+  
+  print(plot_max)
+  list_plots_max[[paste0("max_iter", max_iter)]] = plot_max
+  }
+```
+```{r}
+ggpubr::ggarrange(plotlist = list_plots_max, common.legend = TRUE)
+```
+
+::: {.code_box data-latex=""}
+In the case of iterations, the more iterations the better. We can see that when we do one iteration, the clusters are not visible we just see a huge clump of data points in the center of our plot. However, as we increase the number of iterations we can start to see the formations of clusters. Also, we could keep increasing the number of iterations but trying not to get to a point where it is not feasible
+:::
+
+:::: {.question_box data-latex=""}
+
+**QUESTION #5: UMAP interpretation**
+Create a UMAP visualization of the results. Explore differences between producing
+results from raw data counts or normalized results.
+Remove outlier and interpret the effects of it.
+
+::::
+
+```{r, echo=FALSE}
+X <- rbind(X1, X2, X3, X4)
+metadata <- data.frame(
+  row.names = row.names(X),
+  Strain = gsub("(.*)\\.t[0-9]+_rep[0-9]+", "\\1", rownames(X)),
+  Time_Point = as.factor(gsub(".*\\.t([0-9]+)_rep[0-9]+", "\\1", rownames(X))),
+  Replicate = as.factor(gsub(".*_rep([0-9]+)", "\\1", rownames(X))),
+  Total_Expression = rowSums(X)
+)
+metadata$Strain <- as.factor(metadata$Strain)
+```
+
+## UMAP with Raw data {.tabset }
+
+### By Strain
+```{r}
+raw_UMAP <- umap(X, perplexity = 5)
+
+plot(raw_UMAP$layout, main = "UMAP Representation", col = metadata$Strain, pch = 16)
+legend("topright", legend = levels(metadata$Strain), col = unique(metadata$Strain), pch = 16, title = "Strain")
+```
+
+### By Time Point 
+```{r}
+plot(raw_UMAP$layout, main = "UMAP Representation", col = metadata$Time_Point, pch = 16)
+legend("topright", legend = levels(metadata$Time_Point), col = unique(metadata$Time_Point), pch = 16, title = "Time Point")
+```
+
+### By Replicate
+```{r}
+plot(raw_UMAP$layout, main = "UMAP Representation", col = metadata$Replicate, pch = 16)
+legend("topright", legend = levels(metadata$Replicate), col = unique(metadata$Replicate), pch = 16, title = "Replicate")
+```
+
+### Using ggplot
+```{r}
+raw_UMAP_plot <- data.frame(x = raw_UMAP$layout[,1], y = raw_UMAP$layout[,2], color = metadata$Replicate)
+
+ggplot(data = raw_UMAP_plot) +
+  geom_point(aes(x = x, y = y, color = color, shape = metadata$Strain)) +
+  labs(title = "UMAP Representation") +
+  scale_color_discrete(name = "Replicate") +
+  scale_shape_manual(values = c(3, 19), name = "Strain") +
+  theme_classic()
+```
+
+## {-} 
+
+:::: {.code_box data-latex=""}
+
+We have done different plots using UMAP with raw data. We have colored each plot with a different variable to observe how the samples using UMAP differs between Strains, Replicates and Time Points. We observe a trend where samples are distributed from the negative x-axis and increases up to positive values in the y-axis. We are able to observe some clusters between the same Strain, same Replicate and same Time Point, even though we have an outlier of Strain B, Replicate 3 and Time Point 3. This outlier is situated in the negative x-axis between -2 and -3. We can assure there is batch effect because the clusters are separated between Strains, in order to don't have batch effect we should have in the same cluster both strains.
+
+:::: 
+
+## UMAP with Normalized data {.tabset }
+
+### By Strain
+```{r}
+X= X[, colSums(X)>0]
+Y = X/rowSums(X)
+
+norm_dataSet_UMAP <- umap::umap(Y, perplexity = 5)
+plot(norm_dataSet_UMAP$layout, main = "UMAP Representation", col = metadata$Strain, pch = 16)
+legend("topleft", legend = levels(metadata$Strain), col = unique(metadata$Strain), pch = 16, title = "Strain")
+```
+
+### By Time Point 
+```{r}
+plot(norm_dataSet_UMAP$layout, main = "UMAP Representation", col = metadata$Time_Point, pch = 16)
+legend("topleft", legend = levels(metadata$Time_Point), col = unique(metadata$Time_Point), pch = 16, cex = 0.75, title = "Time Point")
+```
+
+### By Replicate
+```{r}
+plot(norm_dataSet_UMAP$layout, main = "UMAP Representation", col = metadata$Replicate, pch = 16)
+legend("topleft", legend = levels(metadata$Replicate), col = unique(metadata$Replicate), pch = 16, title = "Replicate")
+```
+
+### Using ggplot
+```{r}
+norm_UMAP_plot <- data.frame(x = norm_dataSet_UMAP$layout[,1], y = norm_dataSet_UMAP$layout[,2], color = metadata$Replicate)
+
+ggplot(data = norm_UMAP_plot) +
+  geom_point(aes(x = x, y = y, color = color, shape = metadata$Strain)) +
+  labs(title = "UMAP Representation") +
+  scale_color_discrete(name = "Replicate") +
+  scale_shape_manual(values = c(3, 19), name = "Strain") +
+  theme_classic()
+```
+
+### Total expression
+```{r}
+norm_UMAP_plot <- data.frame(x = norm_dataSet_UMAP$layout[,1], y = norm_dataSet_UMAP$layout[,2], color = metadata$Total_Expression)
+
+ggplot(data = norm_UMAP_plot) +
+  geom_point(aes(x = x, y = y, color = color, shape = metadata$Strain)) +
+  labs(title = "UMAP Representation") +
+  scale_color_gradient(low="green", high = "red") +
+  theme_classic()
+```
+
+## {-} 
+
+:::: {.code_box data-latex=""}
+
+...
+
+:::: 
+
+
+**Take outliers:**
+```{r}
+dim(X)
+X <- X[-31, , drop = FALSE]
+metadata <- metadata[-31, , drop = FALSE]
+dim(X)
+```
+
+## UMAP without Outliers {.tabset }
+
+### By Strain
+```{r}
+X= X[, colSums(X)>0]
+Y = X/rowSums(X)
+
+fumap <- umap(Y, perplexity = 5)
+
+plot(fumap$layout, main = "UMAP Representation", col = metadata$Strain, pch = 16)
+legend("bottomright", legend = levels(metadata$Strain), col = unique(metadata$Strain), pch = 16, title = "Strain")
+```
+
+### By Time Point 
+```{r}
+plot(fumap$layout, main = "UMAP Representation", col = metadata$Time_Point, pch = 16)
+legend("topleft", legend = levels(metadata$Time_Point), col = unique(metadata$Time_Point), pch = 16, cex = 0.75, title = "Time Point")
+```
+
+### By Replicate
+```{r}
+plot(fumap$layout, main = "UMAP Representation", col = metadata$Replicate, pch = 16)
+legend("topleft", legend = levels(metadata$Replicate), col = unique(metadata$Replicate), pch = 16, title = "Replicate")
+```
+
+### Using ggplot
+```{r}
+final_UMAP_plot <- data.frame(x = fumap$layout[,1], y = fumap$layout[,2], color = metadata$Replicate)
+
+ggplot(data = final_UMAP_plot) +
+  geom_point(aes(x = x, y = y, color = color, shape = metadata$Strain)) +
+  labs(title = "UMAP Representation") +
+  scale_color_discrete(name = "Replicate") +
+  scale_shape_manual(values = c(3, 19), name = "Strain") +
+  theme_classic()
+```
+
+### Total expression
+```{r}
+final_UMAP_plot <- data.frame(x = fumap$layout[,1], y = fumap$layout[,2], color = metadata$Total_Expression)
+
+ggplot(data = final_UMAP_plot) +
+  geom_point(aes(x = x, y = y, color = color, shape = metadata$Strain)) +
+  labs(title = "UMAP Representation") +
+  scale_color_gradient(low="green", high = "red") +
+  theme_classic()
+```
+
+## {-} 
+
+::: {.code_box data-latex=""}
+
+...
+
+:::
+
+
+:::: {.question_box data-latex=""}
+
+**QUESTION #6: Predict the data.**
+Explore the effect of predicting a new sample result from previous UMAP analysis.
+Compare results and give some thoughts on it.
+
+::::
+
+## UMAP of X1, X2 and X3 {.tabset }
+
+### By Time point
+```{r}
+X1_X2_X3 <- X[0:35,]
+
+X1_X2_X3 = X1_X2_X3/rowSums(X1_X2_X3)
+
+dataSet_UMAP <- umap::umap(X1_X2_X3)
+#names(p1_dataSet_UMAP)
+#dim(p1_dataSet_UMAP$data)
+
+UMAP_X1_X2_X3 <- data.frame(x = dataSet_UMAP$layout[,1],
+                   y = dataSet_UMAP$layout[,2], 
+                   col = metadata$Time_Point[0:35],
+                   shape = metadata$Replicate[0:35])
+
+ggplot(UMAP_X1_X2_X3) + 
+  geom_point(aes(x=x, y=y, color=col, shape=shape)) +
+  theme_classic() +
+  labs(title = "Normalized X1, X2, X3 data UMAP", color = "Time point", shape = "Replicate") + 
+  scale_shape_manual(values = c(3, 17, 15, 19)) 
+```
+
+### By Total Expression
+```{r}
+X1_X2_X3 <- X[0:35,]
+
+X1_X2_X3 = X1_X2_X3/rowSums(X1_X2_X3)
+
+dataSet_UMAP <- umap::umap(X1_X2_X3)
+#names(p1_dataSet_UMAP)
+#dim(p1_dataSet_UMAP$data)
+
+UMAP_X1_X2_X3 <- data.frame(x = dataSet_UMAP$layout[,1],
+                   y = dataSet_UMAP$layout[,2], 
+                   col = metadata$Total_Expression[0:35],
+                   shape = metadata$Replicate[0:35])
+
+ggplot(UMAP_X1_X2_X3) + 
+  geom_point(aes(x=x, y=y, color=col, shape=shape)) +
+  theme_classic() +
+  labs(title = "Normalized X1, X2, X3 data UMAP", color = "Time point", shape = "Replicate") +
+  scale_color_gradient(low="green", high = "red") +
+  scale_shape_manual(values = c(3, 17, 15, 19)) 
+```
+
+## {-} 
+
+
+:::: {.code_box data-latex=""}
+
+We performed a UMAP analysis on the first three replicates and in this plot we cannot see any batch effect. We have all three replicates for each time point in the two clusters for both strains (A and B). The clusters show variability on the total expression. 
+
+::::
+
+
+## Predicting new sample result {.tabset }
+
+### By Time point
+```{r}
+X4 = X4/rowSums(X4)
+
+dataset_UMAP_x4 = stats::predict(dataSet_UMAP, X4)
+
+# ggplot
+UMAP_plot_predicted <- data.frame(x = dataset_UMAP_x4[,1],
+                   y = dataset_UMAP_x4[,2], 
+                   col = metadata$Time_Point[36:47],
+                   shape = metadata$Replicate[36:47])
+
+ggplot(UMAP_plot_predicted) + 
+  geom_point(aes(x=x, y=y, color=col, shape=shape)) +
+  theme_classic() +
+  labs(title = "UMAP analysis: Predicted X4", color = "Time point", shape = "Replicate") 
+```
+
+### By Total Expression
+```{r}
+X4 = X4/rowSums(X4)
+
+dataset_UMAP_x4 = stats::predict(dataSet_UMAP, X4)
+
+# ggplot
+UMAP_plot_predicted <- data.frame(x = dataset_UMAP_x4[,1],
+                   y = dataset_UMAP_x4[,2], 
+                   col = metadata$Total_Expression[36:47],
+                   shape = metadata$Replicate[36:47])
+
+ggplot(UMAP_plot_predicted) + 
+  geom_point(aes(x=x, y=y, color=col, shape=shape)) +
+  theme_classic() +
+  labs(title = "UMAP analysis: Predicted X4", color = "Time point", shape = "Replicate") + 
+  scale_color_gradient(low="green", high = "red")
+```
+
+## {-} 
+
+
+:::: {.code_box data-latex=""}
+
+With the previous UMAP analysis on X1, X2 and X3, we predicted a new sample result on X4. In this prediction we did not loose the clustering of the samples according to the strain so, we could say that this is an efficient prediction and that there is no batch effect. 
+
+Moreover, this prediction helps us understand the relationship with the previously analyzed data. We can see that the plot of X1, X2, and X3 has two clusters tightly packed and the plot of X4 also has two clusters but the samples are further from each other. This could suggest that X4 has more variability in the samples than the previous datasets and it might also suggest that the features in X4 and the embeddings in the UMAP space might not align as closely as with X1, X2, and X3. 
+
+:::: 
+
+
+:::: {.question_box data-latex=""}
+
+**QUESTION #7: Explore parameters.**
+Explore parameters for the UMAP algorithm: number of neighbors, minimum distance
+and a third parameter of your choice.
+
+::::
+
+## Parameters {.tabset }
+
+### Number of neighbors
+```{r, warning=FALSE}
+Y = X/rowSums(X)
+
+custom.umap.config <- umap::umap.defaults
+
+list_plots_neighbors <- list()
+for (n_neighbors in c(2, 5, 15)) {
+  
+  custom.umap.config$n_neighbors = n_neighbors
+  
+  umap_n <- umap(Y, config = custom.umap.config)
+  
+  umap_data <- data.frame(x = umap_n$layout[,1],
+                          y = umap_n$layout[,2],
+                          col = metadata$Time_Point,
+                          shape = metadata$Replicate)
+  
+  # ggplot
+  plot_n <- ggplot(umap_data) +
+    geom_point(aes(x=x, y=y, color=col, shape=shape)) +
+    scale_shape_manual(values = c(3, 17, 15, 19)) +
+    ggtitle(paste0("UMAP: n_neighbors = ", n_neighbors)) +
+    labs(color = "Time point", shape = "Replicate") +
+    theme_classic()
+  
+  print(plot_n)
+  list_plots_neighbors[[paste0("n_neighbors", n_neighbors)]] = plot_n
+  }
+```
+
+```{r}
+library(gridExtra)
+ggpubr::ggarrange(plotlist = list_plots_neighbors, common.legend = TRUE) #print only 4
+```
+
+### Minimum distance
+```{r}
+custom.umap.config <- umap::umap.defaults
+
+list_plots_min <- list()
+for (min_dist in c(0.1, 0.5, 0.9)) {
+  
+  custom.umap.config$min_dist = min_dist
+  
+  umap_min <- umap(Y, config = custom.umap.config)
+  
+  umap_data <- data.frame(x = umap_min$layout[,1],
+                          y = umap_min$layout[,2],
+                          col = metadata$Time_Point,
+                          shape = metadata$Replicate)
+  
+  # ggplot
+  plot_min <- ggplot(umap_data) +
+    geom_point(aes(x=x, y=y, color=col, shape=shape)) +
+    scale_shape_manual(values = c(3, 17, 15, 19)) +
+    ggtitle(paste0("UMAP: min_dist = ", min_dist)) +
+    labs(color = "Time point", shape = "Replicate") +
+    theme_classic()
+
+  print(plot_min)
+  list_plots_min[[paste0("min_dist", min_dist)]] = plot_min
+} 
+```
+
+```{r}
+ggpubr::ggarrange(plotlist = list_plots_min, common.legend = TRUE)
+```
+
+### Metric
+```{r}
+custom.umap.config <- umap::umap.defaults
+
+list_plots_metric <- list()
+for (metric in c("euclidean", "cosine", "manhattan")) {
+  
+  custom.umap.config$metric = metric
+  
+  umap_metric <- umap(Y, config = custom.umap.config)
+  
+  umap_data <- data.frame(x = umap_metric$layout[,1],
+                          y = umap_metric$layout[,2],
+                          col = metadata$Time_Point,
+                          shape = metadata$Replicate)
+  
+  # ggplot
+  plot_metric <- ggplot(umap_data) +
+    geom_point(aes(x=x, y=y, color=col, shape=shape)) +
+    scale_shape_manual(values = c(3, 17, 15, 19)) +
+    ggtitle(paste0("UMAP: metric = ", metric)) +
+    labs(color = "Time point", shape = "Replicate") +
+    theme_classic()
+
+  print(plot_metric)
+  list_plots_metric[[paste0("metric", metric)]] = plot_metric
+}
+```
+
+```{r}
+ggpubr::ggarrange(plotlist = list_plots_metric, common.legend = TRUE)
+```
+
+## {-}
+
+
+:::: {.code_box data-latex=""}
+
+The 'n_neighbors' parameter in UMAP controls the number of neighbors used in the construction of the graph and this will affect on the global structure of the UMAP. If we look at the plots of the neighbors parameters, we can clearly see that the best value for this parameter is 15. With this higher value we can see more packed and defined clusters than with the other values. And, we will see a moderate local connectivity and a representation of clusters that captures better the global structure. 
+
+The 'min_dist' parameter in UMAP sets the minimum distance between points. We can see that smaller 'min_dist' packs tightly the values leading to more emphasis on local structures but risking overlap between clusters. However, larger values of 'min_dist' separates more the points and preserves global structures but losing local details. For our data we believe that we should have a balance, a 'min_dist' that works well in capturing the local and global structures, for that we believe that we should choose 'min_dist' to be 0.1. 
+
+Finally, the 'metric' parameter. This parameter controls how distance is computed in the ambient space of the input data. For this we have choosen "euclidean" and "manhattan", Minkowski style metrics and "cosine", an angular and correlation metric. The euclidean metric measures the straight-line distance between points in a Euclidean space, the manhattan metric computes the distance by summing the absolute differences between coordinates and the cosine metric measures the cosine of the angle between two vectors. 
+
+We can see that all these metrics in our data plot two clusters and these contain the four replicates and the six time points so, there is not batch effect. All three metric are pretty similar but we will choose the euclidean metric for the nature of our data. 
+
+:::: 
+
+
+:::: {.question_box data-latex=""}
+
+**QUESTION #8: Final interpretation**
+Create a final visualization using results from PCA, tSNE and UMAP and write some
+thoughts on the comparison of the three high-dimension techniques.
+Add some thoughts on the difference between techniques regarding the outlier.
+Use as many metadata available as possible and generate clear and easy to interpret plots.
+Provide comments and thoughts about it. Do you get to the same conclusions?
+::::
+
+## Final plots of PCA {.tabset }
+
+### By Strain and Replicate 
+```{r}
+ggplot(as.data.frame(pca_norm$x), aes(x = PC1, y = PC2, color = metadata$Strain, shape = metadata$Replicate)) +
+  geom_point() +
+  theme_minimal() +
+  labs(color = "Strain", shape = "Replicate", title = "PCA Normalized Data")
+```
+
+### By Strain and Time Point 
+```{r}
+ggplot(as.data.frame(pca_norm$x), aes(x = PC1, y = PC2, color = metadata$Strain, shape = metadata$Time_Point)) +
+  geom_point() +
+  theme_minimal() +
+  labs(color = "Strain", shape = "Time Point", title = "PCA Normalized Data")
+```
+
+### By Strain and Total Expression
+```{r}
+pca_plot <- autoplot(pca_norm, data=metadata, color="Total_Expression", shape="Strain") + theme_classic() +
+  scale_color_gradient(low="green", high = "red")
+pca_plot
+```
+
+## {-} 
+
+::: {.code_box data-latex=""}
+After proper normalization the PC1 separates the two different strains of sherry wines. This value suggests that there are consistent genetic differences between the yeast strains. For the case of PC2, we are able to see a progression of time points from positive to negative, which aligns with the developmental stages of velum formation. Observing the replicates, we can only say that we achieve plots where we don't have batch effects as we have samples from the different replicates in all clusters. 
+:::
+
+## Final plots of tSNE {.tabset }
+
+### By Strain and Replicate 
+```{r}
+set.seed(123)
+
+Y = X/rowSums(X)
+tsne_norm <- Rtsne(Y, pca = TRUE, perplexity = 5)
+
+tsne_plot <- data.frame(x = tsne_norm$Y[,1], 
+                        y = tsne_norm$Y[,2], 
+                        col = metadata$Strain)
+
+ggplot(tsne_plot) + 
+  geom_point(aes(x=x, y=y, color=metadata$Strain, shape = metadata$Replicate)) +
+  theme_classic() +
+  labs(title = "tSNE 2D plot: Strain vs Replicate" , x = "tSNE1", y = "tSNE2", color = "Strain", shape = "Replicate") + 
+  scale_shape_manual(values = c(3, 15, 16, 17)) 
+```
+
+### By Strain and Time Point 
+```{r}
+set.seed(123)
+ggplot(tsne_plot) + 
+  geom_point(aes(x=x, y=y, color=metadata$Strain, shape = metadata$Time_Point)) +
+  theme_classic() +
+  labs(title = "tSNE 2D plot: Strain vs Time Point", x = "tSNE1", y = "tSNE2", color = "Strain", shape = "Time Point") + 
+  scale_shape_manual(values = c(3, 15, 16, 17, 18, 8)) 
+```
+
+### By Strain and Total Expression
+```{r}
+set.seed(123)
+tsne_plot <- ggplot(tsne_plot) + 
+  geom_point(aes(x=x, y=y, color=metadata$Total_Expression, shape = metadata$Strain)) +
+  theme_classic() +
+  scale_color_gradient(low="green", high = "red") + 
+  labs(title = "tSNE 2D plot: Strain vs Total expression", x = "tSNE1", y = "tSNE2", color = "Total expression", shape = "Strain") + 
+  scale_shape_manual(values = c(3, 17))  
+tsne_plot
+```
+
+## {-} 
+
+::: {.code_box data-latex=""}
+Additionally, with the representation in the tSNE plots, we can say that the strains of sherry wines are separated from each other showing again that there are genetic differences between the yeast strains. Moreover, we can also see that we got rid of the batch effect as we see the replicates mixed in the two clusters. 
+
+:::
+
+## Final plots of UMAP {.tabset }
+
+### By Strain and Replicate
+```{r}
+final_UMAP_plot <- data.frame(x = fumap$layout[,1], y = fumap$layout[,2], color = metadata$Replicate)
+
+ggplot(data = final_UMAP_plot) +
+  geom_point(aes(x = x, y = y, color = color, shape = metadata$Strain)) +
+  labs(title = "UMAP Representation") +
+  scale_color_discrete(name = "Replicate") +
+  scale_shape_manual(values = c(3, 19), name = "Strain") +
+  theme_classic()
+```
+
+### By Strain and Time Point 
+```{r}
+final_UMAP_plot <- data.frame(x = fumap$layout[,1], y = fumap$layout[,2], color = metadata$Time_Point)
+
+ggplot(data = final_UMAP_plot) +
+  geom_point(aes(x = x, y = y, color = color, shape = metadata$Strain)) +
+  labs(title = "UMAP Representation") +
+  scale_color_discrete(name = "Time Point") +
+  scale_shape_manual(values = c(3, 19), name = "Strain") +
+  theme_classic()
+```
+
+### By Strain, Time Point and Replicate
+```{r}
+final_UMAP_plot <- data.frame(x = fumap$layout[,1], y = fumap$layout[,2], color = metadata$Time_Point)
+
+ggplot(data = final_UMAP_plot) +
+  geom_point(aes(x = x, y = y, color = color, shape = metadata$Replicate, alpha = metadata$Strain)) +
+  labs(title = "UMAP Representation") +
+  scale_color_discrete(name = "Time Point") +
+  scale_alpha_manual(values = c(0.5, 1.0), name = "Strain") + 
+  scale_shape_manual(values = c(3, 4, 17, 19), name = "Replicate") +
+  theme_classic()
+```
+
+### Expression
+```{r}
+final_UMAP_plot <- data.frame(x = fumap$layout[,1], y = fumap$layout[,2], color = metadata$Total_Expression)
+umap_plot <- ggplot(data = final_UMAP_plot, Treatment = metadata$Strain) +
+  geom_point(aes(x = x, y = y, color = color, shape = metadata$Replicate, alpha = metadata$Strain)) +
+  labs(title = "UMAP Representation", color = "Total Expression") +
+  scale_shape_manual(values = c(3, 4, 17, 19), name = "Replicate") +
+  scale_alpha_manual(values = c(0.5, 1.0), name = "Strain") + 
+  scale_color_gradient(name = "Total expression", low = "green", high = "red") +
+  theme_classic()
+umap_plot
+```
+
+## {-} 
+
+```{r}
+library(gridExtra)
+grid.arrange(pca_plot, tsne_plot, umap_plot, nrow = 3)
+```
+
+::: {.code_box data-latex=""}
+
+Finally, in both our PCA plot and our tSNE plot we can observe two different clusters for the strains. However, in the PCA plot we can see the samples distributed horizontally and more separated whereas in the tSNE plot, we see these two clusters but the samples are clustered tightly on opposite corners. Even tough we do this observation, we obtain the same conclusion that here are genetic differences between sherry wine yeast strains that might be reflected in the wine tasting. 
+:::
