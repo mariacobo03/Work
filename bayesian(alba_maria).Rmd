@@ -1,0 +1,140 @@
+---
+title: "Bayesian Practical"
+author: "Alba Mas and Maria Cobo"
+date: "2023-11-17"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+\usepackage[T1,T2A]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage[russian,english]{babel} % if you're using Russian text
+
+We are analysing the lifetime of a bacterium at a certain temperature, which follows an Exponential distribution with density: x\>0, $\mu$ \> 0 $$\text{f} (x|\mu) = \frac{1}{\mu}e^{-\frac{x}{\mu}}$$
+
+We observe the lifetime of n=8 bacteria (expressed in hours):
+
+2.56 0.42 3.72 0.64 10.7 1.57 9.62 2.54**\
+\
+1- Write the likelihood function. Estimate the mean life expectancy** $\mu$ **using a classical inference procedure.**
+
+$$L(\mu) = \text{П} \frac{1}{\mu}e^{-\frac{x}{\mu}} = (\frac{1}{\mu})^ne^{-\frac{1}{\mu}\sum x_i}$$
+
+$$\alpha(\frac{1}{\mu})^8e^{-\frac{31.77}{\mu}}$$
+
+$$ln(\text{L}(\mu|X)) = ln(\frac{1}{\mu})^8 ln(e^{-\frac{31.77}{\mu}}) = -8ln(\mu) - ({\frac{31.77}{\mu}})$$
+
+$$\frac{d}{d\mu}(-8ln(\mu) - ({\frac{31.77}{\mu}}))=\frac{-8}{\mu}-\frac{31.77}{\mu²}=0$$
+
+$$\mu = 3.97$$
+
+**2- The authors of a paper claim that the mean life expectancy of this bacterium is 4.5±0.5h (reading the paper we see that 0.5h is just the standard deviation). Using a Gaussian density for implementing the prior information for parameter** $\mu$**, compute the posterior density, the expectation and a 95% credibility interval. You can follow the following steps:**
+
+**a) Plot the approximated posterior, that is, plot** $\pi$**(**$\mu$**)𝐿(𝑋\|**$\mu$**). This is just the posterior without the normalizing constant.**
+
+```{r}
+x = seq(3, 7, 0.1)
+prior <- dnorm(x, 4.5, 0.5)
+
+# Likelihood function
+likelihood <- function(mu) {
+  (1/mu^8) * exp(-31.77/mu)
+}
+
+approx_post <- likelihood(x) * prior
+plot(x, approx_post, type='l', col='blue', xlab='μ', ylab='π(μ) L(X|μ)', main='Approximated Posterior')
+```
+
+**b) Note that this is not a density, you would need that** $\int_{0}^{\infty} \text{L}(\mu|X) \, d\mu = 1$**. Then, construct a proper density dividing the approximated posterior by its integral. You can use the function integrate() in R. Plot the posterior density**
+
+```{r}
+approx_post <- function(mu) {
+  likelihood(mu) * dnorm(mu, 4.5, 0.5)
+}
+
+# Constant
+C <- integrate(approx_post, lower = 0, upper = Inf, abs.tol = 1e-09)$value
+
+# Posterior density function
+posterior_density <- function(mu) {
+  approx_post(mu) / C
+}
+
+# Plot the Posterior density
+plot(x, posterior_density(x), type = 'l', col = 'hotpink', xlab = 'μ', ylab = 'Posterior Density', main = 'Posterior Density')
+
+
+```
+
+**c) Plot the posterior distribution function, that is, F(**$\mu$**)=** $\int_{0}^{\mu} \text{f}(\mu|X) \, d\mu$
+
+```{r}
+posterior_distribution_function <- function(u) {
+  integrate(posterior_density, lower = 0, upper = u)$value
+}
+
+# CDF (cumulative distribution function) values for the given range
+cdf_values <- sapply(x, posterior_distribution_function)
+
+# Plot posterior distribution function 
+plot(x, cdf_values, type = 'l', col = 'blue', xlab = 'μ', ylab = 'Posterior Distribution Function', main = 'Posterior Distribution Function')
+```
+
+**d) The expectation can be computed as** $\int_{0}^{\infty} \text{f}(\mu|X) \, d\mu$ **and the credibility interval is obtained by solving F(u)=0.025 and F(u)=0.975. You can solve equations numerically by using function uniroot() in R.**
+
+```{r}
+approx_post <- function(mu) {
+  likelihood(mu) * dnorm(mu, 4.5, 0.5)
+}
+
+integrate(approx_post, 0, Inf)
+
+# Solve F(u) = 0.025
+lower <- function(u) integrate(approx_post, 0, u, abs.tol = 1e-09)$value/C - 0.025
+
+# Solve F(u) = 0.975
+upper <- function(u) integrate(approx_post, 0, u, abs.tol = 1e-09)$value/C - 0.975
+
+low_CI <- uniroot(lower, c(2, 4.5))$root
+low_CI
+
+upp_CI <- uniroot(upper, c(4.5, 6))$root
+upp_CI
+```
+
+**3- Test if your results agree with those of the authors of the paper. In other words, consider H0: 𝜇 = 4.5 and H1: 𝜇 ≠ 4.5. Be non informative for the prior probabilities of H0 and H1, and consider for H1 the same Gaussian prior than in part 2. Compute P(H0\|X), P(H1\|X), and the Bayes factor. Which are the conclusions?**
+
+To test the hypotheses H0: 𝜇 = 4.5 and H1: 𝜇 ≠ 4.5, we can use Bayes' theorem to calculate the posterior probabilities of each hypothesis given the observed data. The posterior probabilities are given by:
+
+$$P(H0|X) = \frac{P(X|H0)P(H0)}{P(X)}$$
+
+$$P(H1|X) = \frac{P(X|H1)P(H1)}{P(X)}$$
+
+The Bayes factor is the ratio of the posterior odds:
+
+$$Bayes factor = \frac{P(H0|X)}{P(H1|X)}$$
+
+Since the prior probabilities are non-informative we can assume equal prior probabilities P(H0)=P(H1)=0.5
+
+```{r}
+prior_H0 <- 0.5
+prior_H1 <- 0.5
+
+# Likelihoods
+likelihood_H0 <- dnorm(4.5, 4.5, 0.5) 
+likelihood_H1 <- integrate(approx_post, lower = 0, upper = Inf, abs.tol = 1e-09)$value / C 
+
+marginal_likelihood <- prior_H0 * likelihood_H0 + prior_H1 * likelihood_H1
+
+posterior_H0 <- (likelihood_H0 * prior_H0) / marginal_likelihood
+posterior_H1 <- (likelihood_H1 * prior_H1) / marginal_likelihood
+
+bayes_factor <- posterior_H0 / posterior_H1
+
+cat("Posterior probability of H0:", posterior_H0, "\n")
+cat("Posterior probability of H1:", posterior_H1, "\n")
+cat("Bayes factor:", bayes_factor, "\n")
+```
+
+This results show that the posterior probability of H1​ (mean life expectancy different from 4.5 hours) is higher than the posterior probability of ​H0 (mean life expectancy exactly 4.5 hours). But since the Bayes factor is so low (0.7978846) we don't have very strong evidence in favor of H1​ relative to H0​.

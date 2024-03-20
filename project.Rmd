@@ -1,0 +1,477 @@
+---
+title: "omics"
+output: html_document
+date: '2023-06-02'
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Download an preprocess the GSE161731 dataset as in the hands-on session (section 3), but now keep all the 5 cohorts: COVID19, CoV_other, Influenza, Bacterial and healthy.
+
+
+```{r}
+#load packages
+library(edgeR)   
+library(EnsDb.Hsapiens.v86)
+library(Glimma)
+library(SummarizedExperiment)
+library(factoextra)
+library(pheatmap)
+
+files_to_download <- c("GSE161731_counts.csv.gz",      # Gene expression (count matrix)
+                      "GSE161731_counts_key.csv.gz")  # Metadata
+  
+# Download them
+for (f in files_to_download) {
+  url <- paste0("https://ftp.ncbi.nlm.nih.gov/geo/series/GSE161nnn/GSE161731/suppl/", f)
+  download.file(url, destfile = f)
+}
+  
+# Load both files in R
+counts <- read.csv("GSE161731_counts.csv.gz", 
+                    header = TRUE, check.names = FALSE, row.names = 1)
+metadata <- read.csv("GSE161731_counts_key.csv.gz",
+                     header = TRUE, check.names = FALSE, row.names = 1)
+
+# Obtain gene annotations
+genes <- genes(EnsDb.Hsapiens.v86)
+
+#Build SummarizedExperiment
+comm.s <- intersect(colnames(counts), rownames(metadata))       # Get common samples (in 'counts' and 'metadata')
+comm.g <- intersect(rownames(counts), genes$gene_id)            # Get common genes (in 'counts' and the annotation)
+se <- SummarizedExperiment(assay = list("counts" = counts[comm.g, comm.s]),
+                           colData = metadata[comm.s, ],
+                           rowRanges = genes[comm.g])
+
+
+#Data Cleaning
+se <- se[, !duplicated(se$subject_id)]  # keep only the first (arbitrary)
+
+```
+
+```{r}
+table(se$cohort)
+```
+
+
+```{r}
+class(se$age)
+```
+
+```{r}
+se$age <- gsub(">89", "90", se$age)
+se$age <- as.numeric(as.character(se$age))
+class(se$age)
+```
+```{r}
+#Metadata cleanup
+# Remove/modify some characters in the "cohort" and "race" columns
+cols <- c("cohort", "race")
+colData(se)[, cols] <- apply(colData(se)[, cols], 2, function(x){
+  y <- gsub("-", "", x)   # Remove "-" 
+  z <- gsub(" ", "_", y)  # Change " " (space) by "_"
+  w <- gsub("/", "_", z)  # Change "/" by "_"
+  return(w)
+})
+```
+
+```{r}
+table(se$cohort)
+se0 <- se
+```
+
+```{r}
+# Rename columns to individual id
+colnames(se) <- se$subject_id
+
+# Remove uninteresting columns
+colData(se)[, c("subject_id", "time_since_onset", "hospitalized")]  <- NULL 
+se
+```
+
+```{r}
+unique(se$cohort)
+```
+
+```{r}
+#Remove lowly expressed genes
+keep <- filterByExpr(se, group = se$cohort)
+table(keep)
+se <- se[keep, ]
+```
+
+```{r}
+#Save the se in a .RData file
+save(se, file = "SummarizedExperiment.RData")
+load("SummarizedExperiment.RData") #load it for further use
+```
+
+## Represent the distribution of the TMM normalization factors per cohort.
+```{r}
+dgl <- calcNormFactors(se, method = "TMM")
+dgl
+```
+
+```{r}
+# Calculate CPM (Counts Per Million Reads)
+assays(se)$CPM <- cpm(se)
+
+# Calculate CPM based on effective library size (using TMM normalization factors)
+assays(se)$TMM <- cpm(dgl, normalized.lib.sizes = TRUE)
+
+boxplot(log2(assays(se)$counts + 1), las = 2) # Raw read counts
+```
+
+```{r}
+boxplot(log2(assays(se)$CPM + 1), las = 2) # CPM
+```
+
+
+```{r}
+boxplot(log2(assays(se)$TMM + 1), las = 2) # CPM with effective library sizes computed by TMM
+```
+
+## PCA
+```{r}
+PCA <- prcomp(log2(t(assays(se)$TMM)+1))
+fviz_pca_ind(PCA, addEllipses = T,
+             col.ind = se$cohort,
+             # try others e.g. se$race, se$gender, se$age
+             pointsize = 3) 
+```
+
+```{r}
+# Outlier removal
+se <- se0
+se <- se[, colnames(se) != "896282"]  
+se <- se[, colnames(se) != "613015"]  
+keep <- filterByExpr(se, group = se$cohort)
+se <- se[keep, ]
+dgl <- calcNormFactors(se, method = "TMM") 
+assays(se)$CPM <- cpm(se) 
+assays(se)$TMM <- cpm(dgl, normalized.lib.sizes = TRUE)
+se
+```
+
+```{r}
+PCA <- prcomp(log2(t(assays(se)$TMM)+1))
+fviz_pca_ind(PCA, addEllipses = T,
+             col.ind = se$cohort,
+             pointsize = 3) 
+
+# PCA plots for the other variables
+fviz_pca_ind(prcomp(log2(t(assays(se)$TMM)+1)), addEllipses = T,
+             col.ind = se$gender,
+             pointsize = 3)
+
+fviz_pca_ind(prcomp(log2(t(assays(se)$TMM)+1)), addEllipses = T,
+             col.ind = se$race,
+             pointsize = 3)
+
+fviz_pca_ind(prcomp(log2(t(assays(se)$TMM)+1)), addEllipses = T,
+             col.ind = as.character(se$batch),
+             pointsize = 3)
+
+#group ages by groups
+se2 <- se
+se2$age[se$age > 65] = '+65'
+se2$age[se$age <= 64 & se2$age > 50] = '51-64'
+se2$age[se$age <= 50 & se2$age > 30] = '31-50'
+se2$age[se$age <= 30  & se2$age > 18 ] = '19-30'
+se2$age[se$age <= 18] = '0-18'
+
+fviz_pca_ind(prcomp(log2(t(assays(se2)$TMM)+1)), addEllipses = T,
+             col.ind = se2$age,
+             pointsize = 3)
+```
+
+```{r}
+se2$age[se$age <= 90  & se2$age > 30 ] = '+31'
+se2$age[se$age <= 30] = '0-30'
+fviz_pca_ind(prcomp(log2(t(assays(se2)$TMM)+1)), addEllipses = T,
+             col.ind = se2$age,
+             pointsize = 3)
+```
+
+
+
+## Clustering / Heatmap plot
+```{r}
+pheatmap(log2(assays(se)$TMM + 1), show_rownames = FALSE, annotation_col = as.data.frame(colData(se)))
+```
+
+## Design Matrix
+
+Based on the exploratory data analysis results we selected cohort, race and age as the relevant covariates.
+
+
+
+
+```{r}
+# Obtain the design matrix
+cohort <- as.factor(se$cohort)
+race <- as.factor(se$race)
+age <- se$age
+design <- model.matrix(~0 + cohort + age + race)
+colnames(design)[1:5] <- levels(cohort)
+design
+```
+
+
+```{r}
+# COVID19 vs healthy - design and contrast matrix
+co_h <- se[,se$cohort%in% c("COVID19", "healthy")]
+cohort <- as.factor(co_h$cohort)
+race <- as.factor(co_h$race)
+age <- co_h$age
+design <- model.matrix(~0 + cohort + age + race)
+colnames(design)[1:2] <- levels(cohort)
+head(design)
+
+contr.matrix <- makeContrasts(
+  COVID19 - healthy,
+  levels = colnames(design)
+)
+contr.matrix
+```
+
+```{r}
+# All pairwise comparisons
+a <- se[, se$cohort %in% c("COVID19", "CoV_other", "Influenza", "Bacterial", "healthy")]
+cohort <- as.factor(a$cohort)
+race <- as.factor(a$race)
+age <- a$age
+all_pair <- model.matrix(~0 + cohort + age + race)
+colnames(all_pair)[1:5] <- levels(cohort)
+head(all_pair)
+
+all_contrast <- makeContrasts(
+  COVID19 - healthy, COVID19 - Influenza, COVID19 - CoV_other , COVID19 - Bacterial, 
+  healthy - Influenza, healthy - CoV_other, healthy - Bacterial, 
+  Influenza - CoV_other, Influenza - Bacterial, 
+  Bacterial - CoV_other,
+  levels = colnames(all_pair)
+)
+all_contrast
+```
+
+```{r}
+# Healthy vs the rest (average)
+a <- se[, se$cohort %in% c("COVID19", "CoV_other", "Influenza", "Bacterial", "healthy")]
+cohort <- as.factor(a$cohort)
+race <- as.factor(a$race)
+age <- a$age
+design <- model.matrix(~0 + cohort + age + race)
+colnames(design)[1:5] <- levels(cohort)
+head(design)
+
+contr.matrix <- makeContrasts(
+  (COVID19 + Influenza + CoV_other + Bacterial)/2 - healthy, 
+  levels = colnames(design)
+)
+contr.matrix
+
+```
+
+## Differential expression analysis - voom+limma
+
+```{r}
+# Take matrices corresponding to question b).
+design <- all_pair 
+contrast <- all_contrast  
+
+y <- voom(dgl, design, plot = TRUE)  # voom uses the TMM normalization factors available from 'dgl'
+
+#Fit linear models for all pairwise comparisons
+fit <- lmFit(y, design)
+fit <- contrasts.fit(fit, contrast)
+fit <- eBayes(fit)
+
+results <- topTable(fit, sort.by = "F", n = Inf) # Get all results, ordered by P-value
+head(results)
+
+```
+
+```{r}
+# How many DE genes are there? (5% FDR)
+results.5fdr <-  subset(results, adj.P.Val < 0.05) 
+nrow(results.5fdr)
+```
+
+```{r}
+dt <- decideTests(fit, adjust.method = "fdr", p.value = 0.05)
+summary(dt)
+```
+
+
+```{r}
+glMDPlot(fit, status=dt, side.main="ENSEMBL", counts = log2(assays(se)$TMM+1), groups = se$cohort)
+```
+
+```{r}
+dgl$sampls$group <- dgl$samples$cohort  # Allows coloring by cohort
+glimmaVolcano(fit, dge = dgl) 
+```   
+
+Cannot perform vennDiagram because it exceeds 5 sets
+```{r}
+library(UpSetR)
+u_data <- cbind.data.frame(abs(dt))
+upset(u_data, order.by = "freq", sets.bar.color ="#e69509",  main.bar.color = "#781C6DFF")
+```
+
+## GO and KEGG enrichment analysis
+```{r}
+IHdt <- dt[dt[,5] %in% c(1,-1),][,5] #extract the genes involved in the Healthy-Influenza contrast
+IHdt
+dgl2 <- dgl[rownames(dgl$genes) %in% rownames(IHdt),] #keep only the genes involved in the Healthy-Influenza contrast
+dgl2 <- dgl2[!is.na(dgl2$genes$entrezid), ]         # drop NAs
+dgl2 <- dgl2[!duplicated(dgl2$genes$entrezid), ]    # drop duplicated IDs
+dgl2 <- dgl2[!grepl(" ", dgl2$genes$entrezid), ]    # drop cases with multiple IDs (they have whitespaces)
+rownames(dgl2) <- as.character(dgl2$genes$entrezid)
+
+y2 <- voom(dgl2, all_pair, plot = F)
+fit2 <- lmFit(y2, all_pair)                      
+fit2 <- contrasts.fit(fit2, all_contrast)      
+fit2 <- eBayes(fit2)
+
+#GO enrichment analysis
+go <- goana(fit2, species="Hs")
+topGO(go, n=10, ontology = "BP")
+```
+
+
+#8. Subset the GO terms corresponding to the down-regulated genes in Influenza with respect to healthy controls and their corresponding P-values. Correct these P-values by multiple testing via FDR, setting an FDR threshold of 0.05. Use REVIGO to summarize and represent those terms, and include the obtained plots in your report. Discuss your results.
+
+```{r}
+topGo <- topGO(go, n =Inf, sort ="up") #by default the output table from topGo is sorted by the minimum of P.Down, that why we use sort
+topGo #GO terms in Influenza 
+```
+
+```{r}
+#GO terms corresponding to the down-regulated genes in Influenza
+GOsubset <- data.frame(row.names = rownames(topGo), topGo$P.Down)
+GOsubset #p-values of the GO terms
+```
+
+```{r}
+#correct p-values setting an FDR threshold of 0.05
+GOsubset[,1] <- p.adjust(GOsubset[,1], method = "fdr", ) #adjust p-value
+#FDR testing 
+GOsubset <- subset(GOsubset, topGo.P.Down < 0.05) #keep those under 0.05
+write.table(GOsubset, "GOsubset", row.names=TRUE , col.names = FALSE,sep="\t", quote = FALSE)
+GOsubset
+```
+
+```{r}
+
+library( ggplot2 );
+library( scales );
+
+
+revigo.names <- c("term_ID","description","frequency","plot_X","plot_Y","log_size","value","uniqueness","dispensability");
+revigo.data <- rbind(c("GO:0002181","cytoplasmic translation",0.12046428693071752,5.070995045925634,-2.7553940255375355,4.5589244643947815,-7.2546789176927335,0.6930052243222782,0),
+c("GO:0006412","translation",5.085673767131161,4.3885304399938425,-3.4250322276443654,6.184402940776566,-6.808894546387459,0.5610175308793744,0.57750679),
+c("GO:0009059","macromolecule biosynthetic process",15.258385035486357,4.475495641515702,-5.432184246754398,6.661562823384344,-2.1279359590407405,0.799820295378146,0.22152518),
+c("GO:0009615","response to virus",0.1725522769170509,-0.13920610543637457,5.235770673282122,4.714983224819396,-5.457662775322607,0.8758468719483574,-0),
+c("GO:0016072","rRNA metabolic process",1.1833519865547792,2.393403256470286,-7.530887480016359,5.551169323782296,-1.679120603901358,0.734445919572223,0.14987638),
+c("GO:0022613","ribonucleoprotein complex biogenesis",1.8755867382780071,-5.025405919406969,-3.2538313960951055,5.751192082363944,-3.7304898576910053,0.6691829268341095,0.55825454),
+c("GO:0022618","protein-RNA complex assembly",0.3488232238727174,-5.557782620386698,-3.0129850668807645,5.020663691622254,-3.9305546563529443,0.6084925228948781,0.64803807),
+c("GO:0032608","interferon-beta production",9.978542142975744E-06,5.764008388849915,0.6718202992505259,0.6020599913279624,-1.4079000006623648,0.9079647588610893,0.18439843),
+c("GO:0032728","positive regulation of interferon-beta production",0.005348498588634999,-3.745775667464626,4.401487745918481,3.2065560440990297,-1.679120603901358,0.9249359381276268,-0),
+c("GO:0034660","ncRNA metabolic process",3.769763500568378,2.904695465916875,-6.488186448665458,6.054368647279385,-1.5030070104083595,0.7574408902083858,0.44836608),
+c("GO:0042255","ribosome assembly",0.1689832850105799,-5.098541307936825,-4.166720257108119,4.705906455700312,-4.287957978102011,0.6388990858064474,0.00745932),
+c("GO:0042273","ribosomal large subunit biogenesis",0.17322749160205891,-5.54257353417287,-3.9524958996264994,4.716679314467825,-1.9699312269377742,0.6563445266131416,0.64937581),
+c("GO:0043603","amide metabolic process",6.518961624921768,3.048735221462939,3.5282056409986824,6.292232804957447,-2.8325190231994615,0.9051383766984687,0.07758432),
+c("GO:0071826","protein-RNA complex organization",0.359310671664985,-5.446047698935377,-2.1124012702264894,5.033528295279234,-3.356646926555607,0.7322883283657821,0.3920263));
+
+one.data <- data.frame(revigo.data);
+names(one.data) <- revigo.names;
+one.data <- one.data [(one.data$plot_X != "null" & one.data$plot_Y != "null"), ];
+one.data$plot_X <- as.numeric( as.character(one.data$plot_X) );
+one.data$plot_Y <- as.numeric( as.character(one.data$plot_Y) );
+one.data$log_size <- as.numeric( as.character(one.data$log_size) );
+one.data$value <- as.numeric( as.character(one.data$value) );
+one.data$frequency <- as.numeric( as.character(one.data$frequency) );
+one.data$uniqueness <- as.numeric( as.character(one.data$uniqueness) );
+one.data$dispensability <- as.numeric( as.character(one.data$dispensability) );
+
+p1 <- ggplot( data = one.data );
+p1 <- p1 + geom_point( aes( plot_X, plot_Y, colour = value, size = log_size), alpha = I(0.6) );
+p1 <- p1 + scale_colour_gradientn( colours = c("blue", "green", "yellow", "red"), limits = c( min(one.data$value), 0) );
+p1 <- p1 + geom_point( aes(plot_X, plot_Y, size = log_size), shape = 21, fill = "transparent", colour = I (alpha ("black", 0.6) ));
+p1 <- p1 + scale_size( range=c(5, 30)) + theme_bw(); # + scale_fill_gradientn(colours = heat_hcl(7), limits = c(-300, 0) );
+ex <- one.data [ one.data$dispensability < 0.15, ];
+p1 <- p1 + geom_text( data = ex, aes(plot_X, plot_Y, label = description), colour = I(alpha("black", 0.85)), size = 3 );
+p1 <- p1 + labs (y = "semantic space x", x = "semantic space y");
+p1 <- p1 + theme(legend.key = element_blank()) ;
+one.x_range = max(one.data$plot_X) - min(one.data$plot_X);
+one.y_range = max(one.data$plot_Y) - min(one.data$plot_Y);
+p1 <- p1 + xlim(min(one.data$plot_X)-one.x_range/10,max(one.data$plot_X)+one.x_range/10);
+p1 <- p1 + ylim(min(one.data$plot_Y)-one.y_range/10,max(one.data$plot_Y)+one.y_range/10);
+
+p1;
+
+
+ggsave("Drevigo-plot.pdf");
+```
+
+```{r}
+install.packages("treemap")
+library(treemap) 								# treemap package by Martijn Tennekes
+
+
+revigo.names <- c("term_ID","description","frequency","value","uniqueness","dispensability","representative");
+revigo.data <- rbind(c("GO:0002181","cytoplasmic translation",0.12046428693071752,7.2546789176927335,0.6930052243222782,0,"cytoplasmic translation"),
+c("GO:0006412","translation",5.085673767131161,6.808894546387459,0.5610175308793744,0.57750679,"cytoplasmic translation"),
+c("GO:0009059","macromolecule biosynthetic process",15.258385035486357,2.1279359590407405,0.799820295378146,0.22152518,"cytoplasmic translation"),
+c("GO:0016072","rRNA metabolic process",1.1833519865547792,1.679120603901358,0.734445919572223,0.14987638,"cytoplasmic translation"),
+c("GO:0032608","interferon-beta production",9.978542142975744E-06,1.4079000006623648,0.9079647588610893,0.18439843,"cytoplasmic translation"),
+c("GO:0034660","ncRNA metabolic process",3.769763500568378,1.5030070104083595,0.7574408902083858,0.44836608,"cytoplasmic translation"),
+c("GO:0009615","response to virus",0.1725522769170509,5.457662775322607,0.8758468719483574,-0,"response to virus"),
+c("GO:0032728","positive regulation of interferon-beta production",0.005348498588634999,1.679120603901358,0.9249359381276268,-0,"positive regulation of interferon-beta production"),
+c("GO:0042255","ribosome assembly",0.1689832850105799,4.287957978102011,0.6388990858064474,0.00745932,"ribosome assembly"),
+c("GO:0022613","ribonucleoprotein complex biogenesis",1.8755867382780071,3.7304898576910053,0.6691829268341095,0.55825454,"ribosome assembly"),
+c("GO:0022618","protein-RNA complex assembly",0.3488232238727174,3.9305546563529443,0.6084925228948781,0.64803807,"ribosome assembly"),
+c("GO:0042273","ribosomal large subunit biogenesis",0.17322749160205891,1.9699312269377742,0.6563445266131416,0.64937581,"ribosome assembly"),
+c("GO:0071826","protein-RNA complex organization",0.359310671664985,3.356646926555607,0.7322883283657821,0.3920263,"ribosome assembly"),
+c("GO:0043603","amide metabolic process",6.518961624921768,2.8325190231994615,0.9051383766984687,0.07758432,"amide metabolic process"));
+
+stuff <- data.frame(revigo.data);
+names(stuff) <- revigo.names;
+
+stuff$value <- as.numeric( as.character(stuff$value) );
+stuff$frequency <- as.numeric( as.character(stuff$frequency) );
+stuff$uniqueness <- as.numeric( as.character(stuff$uniqueness) );
+stuff$dispensability <- as.numeric( as.character(stuff$dispensability) );
+
+# by default, outputs to a PDF file
+pdf( file="revigo_treemap.pdf", width=16, height=9 ) # width and height are in inches
+
+# check the tmPlot command documentation for all possible parameters - there are a lot more
+treemap(
+  stuff,
+  index = c("representative","description"),
+  vSize = "value",
+  type = "categorical",
+  vColor = "representative",
+  title = "Revigo TreeMap",
+  inflate.labels = FALSE,      # set this to TRUE for space-filling group labels - good for posters
+  lowerbound.cex.labels = 0,   # try to draw as many labels as possible (still, some small squares may not get a label)
+  bg.labels = "#CCCCCCAA",   # define background color of group labels
+								 # "#CCCCCC00" is fully transparent, "#CCCCCCAA" is semi-transparent grey, NA is opaque
+  position.legend = "none"
+)
+
+dev.off()
+```
+
+These are the results from the REVIGO Scatterplot and Tree Map that we get for the adjusted p-values of the down-regulated genes in Influenza. The Scatter plot shows the cluster representatives in a two dimensional space derived by applying multidimensional scaling to a matrix of the GO term semantic similarities. And the Tree Map, is a two-level hierarchy of GO terms that also shows the clusters representatives from the Scatterplot and the Interactive graph. 
+
+The color of each circle in the Scatterplot indicates their statistical significance, their p-value, and their size is based on their log size. In our Scatter PLot, we can see six clear clusters: positive regulation of interferon-beta production, response to virus, amide metabolic process, cystoplasmic translation, rRNA metabolic process and ribosome assembly. Out of these, the one with the highest statistical significance is cystoplasmic translation (related to protein synthesis), we can see this because it has a darker color than the other clusters which also indicates a lower p-value. In other words, a lower p-value means that the observed gene expression changes associated with these GO terms are highly unlikely to occur by chance alone. 
+
+On the other hand, we have the tree map which shows an overview of the distribution of GO terms. In this plot, the different colors represent different clusters. The color that is more dominant in this plot is the red, this cluster contains: cytoplasmic translation, translation, macromolecule biosynthetic process, rRNA metabolic process, ncRNA metabolic process and nterferon−beta production. Another dominant cluster is the blue one which contains: ribosome assembly, ribosomal large subunit biogenesis, ribonucleoprotein complex biogenesis, protein-RNA complex assembly and protein-RNA complex organization. We also have three more clusters: response to virus, positive regulation of interferon-beta production and amide metabolic process. 
+
+In conclusion, there are gene ontology (GO) terms with a bigger presence regarding the down-regulated genes in Influenza compared to healthy controls and regarding to our results we can see that the protein synthesis and the cellular metabolism are influenced by the Influenza infection. 
