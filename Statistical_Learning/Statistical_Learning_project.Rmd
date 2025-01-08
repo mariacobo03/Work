@@ -1,0 +1,909 @@
+---
+title: ''
+output: html_document
+date: "2024-11-12"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+# Load required libraries
+library(readxl)  
+library(ggplot2)   
+library(caret)   
+library(pROC)     
+library(mixOmics)   
+library(venn) 
+library(caret) 
+library(dplyr)      
+library(tidyr)      
+```
+
+
+```{r}
+data <- read_excel("41598_2018_29592_MOESM2_ESM.xlsx")
+X <-t(as.matrix(data[,2:ncol(data)]))
+
+sex <- strsplit(colnames(data)[2:ncol(data)]," - ")
+
+Y <- c()
+
+for(i in 1:length(sex))
+{
+  Y <- as.numeric(c(Y, sex[[i]][1]));
+}
+head(X)
+Y
+```
+
+
+#Hold-Out Partition (Training/Test Split)
+```{r}
+females <- which(Y=="2")
+training.females <-females[1:(sum(Y=="2")*0.7)]
+test.females <- setdiff(females, training.females)
+males <- which(Y=="1")
+training.males <- males[1:(sum(Y=="1")*0.7)]
+test.males <- setdiff(males, training.males)
+
+training <- c(training.males, training.females);
+test <- c(test.females, test.males)
+X.training <- X[training,]
+Y.training <- Y[training]
+X.test <- X[test,]
+Y.test <- Y[test]
+```
+
+#K-fold
+```{r}
+# Verify or assign column names to X
+if (is.null(colnames(X))) {
+  colnames(X) <- paste0("X", 1:ncol(X))  
+}
+
+X.training <- as.data.frame(X[training, ])
+X.test <- as.data.frame(X[test, ])
+
+# Combine X.training and Y.training in a single data frame
+Y.training <- as.factor(Y[training])
+combined_training_data <- data.frame(X.training, Y = Y.training)
+
+# Start k-fold
+library(caret)
+kfolds <- trainControl(method = "cv", number = 5)
+
+# Train the model
+set.seed(123)
+model <- train(Y ~ ., data = combined_training_data, method = "rpart", trControl = kfolds)
+
+# Obtain the predictions
+predictions <- predict(model, newdata = X.test)
+
+# Evaluate the predictions
+conf_matrix <- confusionMatrix(predictions, as.factor(Y[test]))
+print(conf_matrix)
+```
+
+The results of the confusion matrix and performance statistics show how the model performed on the test set, with an overall accuracy of 67.57%. Below is a breakdown of the key metrics:
+Confusion Matrix
+
+    Class 1 (predicted as 1): 11 true positives
+    Class 1 (predicted as 2): 7 false negatives
+    Class 2 (predicted as 2): 14 true negatives
+    Class 2 (predicted as 1): 5 false positives
+
+Performance Metrics
+
+    Accuracy:
+    67.57% – The proportion of correct predictions overall.
+    Kappa:
+    0.349 – Measures agreement between prediction and reference, adjusted for random chance; indicates moderate agreement.
+    Sensitivity:
+    61.11% – The ability to correctly identify positive cases (Class 1).
+    Specificity:
+    73.68% – The ability to correctly identify negative cases (Class 2).
+    Positive Predictive Value (PPV):
+    68.75% – The proportion of Class 1 predictions that are actually Class 1.
+    Negative Predictive Value (NPV):
+    66.67% – The proportion of Class 2 predictions that are actually Class 2.
+    Balanced Accuracy:
+    67.40% – The average of sensitivity and specificity, useful when classes are imbalanced.
+
+Interpretation
+
+The model’s accuracy, along with the Kappa score, suggests that it is moderately good at distinguishing between the two classes, though it is not perfect. The 95% confidence interval for accuracy indicates that the model performs significantly better than the null information rate (NIR), which is the proportion of the majority class.
+Suggestions for Improvement
+
+To improve this model, you can explore the following options:
+
+    Try different algorithms: For example, Random Forest or Support Vector Machines (SVM) instead of rpart.
+    Optimize hyperparameters: Tune the hyperparameters of rpart or other models to enhance performance.
+    Additional data preprocessing: Consider feature selection, scaling variables, or other preprocessing techniques to improve performance and reduce overfitting.
+
+
+
+# Week 3: Explore the difference in metabolites concentration between both groups using univariate testing in testing. Perform a multitest correction (fdr correction). Decide if the metabolite concentration is gaussian for both classes. Explore if you need a non-linear transformation to improve gaussianity
+
+```{r}
+results <- data.frame(metabolite = colnames(X.test), 
+                      p_value = NA, 
+                      t_stat = NA, 
+                      adjusted_p_value = NA)
+
+male_values <- which(Y=="1")
+female_values <- which(Y=="2")
+  
+shapiro.test(male_values)  
+shapiro.test(female_values) 
+```
+
+> shapiro.test(male_values)  # Para el grupo masculino
+
+	Shapiro-Wilk normality test
+
+data:  male_values
+W = 0.96741, p-value = 0.2697
+
+> shapiro.test(female_values)  # Para el grupo femenino
+
+	Shapiro-Wilk normality test
+
+data:  female_values
+W = 0.98001, p-value = 0.662
+
+Los resultados de las pruebas de Shapiro-Wilk para la normalidad muestran que tanto para el grupo masculino como para el grupo femenino, no se rechaza la hipótesis nula de normalidad, ya que los valores de p son altos:
+
+Para el grupo masculino: p-value = 0.2697 (mayor que 0.05, lo que sugiere que los datos pueden ser normales).
+Para el grupo femenino: p-value = 0.662 (mayor que 0.05, lo que también sugiere que los datos pueden ser normales).
+¿Qué significa esto?
+Dado que ambos grupos (hombres y mujeres) parecen tener distribuciones normales, podrías utilizar una prueba t de Student para comparar las concentraciones de los metabolitos entre los dos grupos.
+
+
+```{r}
+# Realizar la prueba t de Student para cada metabolito
+for (metabolite in colnames(X)) {
+  male_values <- X[males, metabolite]
+  female_values <- X[females, metabolite]
+  
+  # Realizar prueba t
+  test_result <- t.test(male_values, female_values)
+  
+  # Guardar resultados
+  results$p_value[results$metabolite == metabolite] <- test_result$p.value
+  results$t_stat[results$metabolite == metabolite] <- test_result$statistic
+}
+
+# Ajuste de p-valores por FDR
+results$adjusted_p_value <- p.adjust(results$p_value, method = "fdr")
+
+# Ver los resultados
+head(results)
+
+```
+
+```{r}
+# Filtrar metabolitos significativos
+significant_metabolites <- results[results$adjusted_p_value < 0.05, ]
+print(significant_metabolites)
+
+```
+
+p-valor ajustado es menor a 0.05. Este valor es considerado generalmente como el umbral para indicar que el metabolito muestra una diferencia estadísticamente significativa entre los dos grupos (en tu caso, entre los grupos masculino y femenino).
+En términos prácticos, "significativo" significa:
+Diferencia real entre los grupos:
+Si realizamos una prueba de hipótesis (como la prueba t de Student), estamos verificando si existe una diferencia en la media de las concentraciones de los metabolitos entre los dos grupos.
+Un p-valor bajo (menos de 0.05, por ejemplo) indica que esa diferencia probablemente no es debida al azar.
+Control de errores de tipo I (FDR):
+Cuando se ajustan los p-valores con el método FDR (False Discovery Rate), estás controlando la tasa de falsos positivos. Este ajuste tiene en cuenta que, si realizas muchas pruebas estadísticas (como en tu caso, múltiples metabolitos), es probable que algunos resultados sean falsos positivos solo por casualidad.
+Si un p-valor ajustado (por FDR) es menor que 0.05, puedes decir que el metabolito muestra una diferencia significativa entre los dos grupos con un bajo riesgo de error falso.
+Supongamos que estás comparando el metabolito X1 entre hombres y mujeres. Si el p-valor ajustado para X1 es 0.03 (menor que 0.05), eso significa que hay una diferencia estadísticamente significativa en la concentración de ese metabolito entre los dos grupos. Es decir, probablemente no se debe al azar.
+
+Significado en tu contexto:
+En el análisis que estás realizando, los metabolitos con un p-valor ajustado menor a 0.05 (significativos) son aquellos metabolitos cuya concentración difiere de manera significativa entre hombres y mujeres. Estos son los metabolitos que tienen un cambio importante en su concentración que no se puede explicar solo por azar y pueden ser relevantes para entender las diferencias biológicas entre los dos grupos.
+
+¿Qué implicaciones tiene?
+
+Si un metabolito es significativo, su diferencia en concentración podría ser importante para la investigación. Por ejemplo, podrías estar buscando metabolitos que puedan estar relacionados con diferencias biológicas, enfermedades, comportamientos o cualquier otra variable de interés entre hombres y mujeres.
+
+Por otro lado, si el p-valor ajustado es mayor que 0.05, eso sugiere que no hay suficiente evidencia para afirmar que existe una diferencia real en ese metabolito entre los dos grupos, y por lo tanto, ese metabolito no es significativo en tu análisis.
+
+
+
+
+
+```{r}
+# Crear un dataframe para los metabolitos significativos
+# Recopilar las muestras de los metabolitos significativos
+significant_data <- data.frame()
+
+# Recorrer los metabolitos significativos
+for (metabolite in significant_metabolites$metabolite) {
+  # Obtener los valores para los grupos masculino y femenino
+  male_values <- X[males, metabolite]
+  female_values <- X[females, metabolite]
+  
+  # Crear un dataframe con los datos
+  temp_data <- data.frame(
+    metabolite = rep(metabolite, length(male_values) + length(female_values)),
+    value = c(male_values, female_values),
+    group = rep(c("Male", "Female"), times = c(length(male_values), length(female_values)))
+  )
+  
+  # Agregar los datos al dataframe combinado
+  significant_data <- rbind(significant_data, temp_data)
+}
+
+# Graficar un boxplot para cada metabolito significativo
+library(ggplot2)
+
+ggplot(significant_data, aes(x = group, y = value, fill = group)) +
+  geom_boxplot() +
+  facet_wrap(~ metabolite, scales = "free_y") +  # Facet por metabolito
+  theme_minimal() +
+  labs(title = "Distribution of significant metabolites btw Male and Female",
+       x = "Group",
+       y = "Concentration of metabolites") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))  # Para mejorar la lectura del eje X
+
+```
+```{r}
+###VOLCANO CON TSTUDENT
+# Asumimos que 'X' es tu matriz de datos o dataframe con las concentraciones de los metabolitos
+# y 'Y' contiene las etiquetas de los grupos (1 = Masculino, 2 = Femenino)
+
+# Inicializa un dataframe para almacenar los resultados
+results <- data.frame(metabolite = colnames(X),
+                      p_value = NA,
+                      t_stat = NA,
+                      adjusted_p_value = NA,
+                      fold_change = NA,  # Añadimos la columna para el fold change
+                      neg_log10_p_value = NA)
+
+# Indices de los grupos masculino y femenino
+male_values <- which(Y == "1")
+female_values <- which(Y == "2")
+
+# Realizar la prueba t de Student para cada metabolito y calcular el fold change
+for (metabolite in colnames(X)) {
+  
+  # Obtener los valores de cada metabolito para el grupo masculino y femenino
+  male_values_data <- X[male_values, metabolite]  # Datos de metabolito para el grupo masculino
+  female_values_data <- X[female_values, metabolite]  # Datos de metabolito para el grupo femenino
+  
+  # Realizar la prueba t
+  test_result <- t.test(male_values_data, female_values_data)
+  
+  # Guardar los resultados de la prueba t
+  results$p_value[results$metabolite == metabolite] <- test_result$p.value
+  results$t_stat[results$metabolite == metabolite] <- test_result$statistic
+  
+  # Calcular el fold change (log2 de la razón entre las medias)
+  fold_change <- mean(male_values_data) / mean(female_values_data)
+  results$fold_change[results$metabolite == metabolite] <- log2(fold_change)
+  
+  # Calcular el -log10(p-value) para la significancia
+  results$neg_log10_p_value[results$metabolite == metabolite] <- -log10(results$p_value[results$metabolite == metabolite])
+}
+
+# Ajustar los p-valores por FDR (corrección de Benjamini-Hochberg)
+results$adjusted_p_value <- p.adjust(results$p_value, method = "fdr")
+
+# Filtrar metabolitos significativos (ajustados por p < 0.05)
+significant_metabolites <- results[results$adjusted_p_value < 0.05, ]
+
+# Crear el Volcano Plot
+library(ggplot2)
+
+ggplot(results, aes(x = fold_change, y = neg_log10_p_value)) +
+  geom_point(aes(color = adjusted_p_value < 0.05), size = 2) +  # Colorear por significancia (p-valor ajustado < 0.05)
+  scale_color_manual(values = c("gray", "red")) +  # Gris para no significativos, rojo para significativos
+  theme_minimal() +
+  labs(title = "Volcano Plot of Metabolites",
+       x = "Log2 Fold Change (Male/Female)",
+       y = "-Log10(Adjusted p-value)") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))  # Mejora la legibilidad del eje X
+
+# Filtrar y mostrar los metabolitos significativos
+print(significant_metabolites)
+
+```
+
+
+```{r}
+#VOLCANO CON WILCOXON
+# Asumimos que 'X' es tu matriz de datos o dataframe con las concentraciones de los metabolitos
+# y 'Y' contiene las etiquetas de los grupos (1 = Masculino, 2 = Femenino)
+
+# Inicializa un dataframe para almacenar los resultados
+results <- data.frame(metabolite = colnames(X),
+                      p_value = NA,
+                      adjusted_p_value = NA,
+                      fold_change = NA,  # Añadimos la columna para el fold change
+                      neg_log10_p_value = NA)
+
+# Indices de los grupos masculino y femenino
+male_values <- which(Y == "1")
+female_values <- which(Y == "2")
+
+# Realizar la prueba de Wilcoxon para cada metabolito y calcular el fold change
+for (metabolite in colnames(X)) {
+  
+  # Obtener los valores de cada metabolito para el grupo masculino y femenino
+  male_values_data <- X[male_values, metabolite]  # Datos de metabolito para el grupo masculino
+  female_values_data <- X[female_values, metabolite]  # Datos de metabolito para el grupo femenino
+  
+  # Realizar la prueba de Wilcoxon (Mann-Whitney U test)
+  test_result <- wilcox.test(male_values_data, female_values_data)
+  
+  # Guardar los resultados de la prueba de Wilcoxon
+  results$p_value[results$metabolite == metabolite] <- test_result$p.value
+  
+  # Calcular el fold change (log2 de la razón entre las medias)
+  fold_change <- mean(male_values_data) / mean(female_values_data)
+  results$fold_change[results$metabolite == metabolite] <- log2(fold_change)
+  
+  # Calcular el -log10(p-value) para la significancia
+  results$neg_log10_p_value[results$metabolite == metabolite] <- -log10(results$p_value[results$metabolite == metabolite])
+}
+
+# Ajustar los p-valores por FDR (corrección de Benjamini-Hochberg)
+results$adjusted_p_value <- p.adjust(results$p_value, method = "fdr")
+
+# Filtrar metabolitos significativos (ajustados por p < 0.05)
+significant_metabolites <- results[results$adjusted_p_value < 0.05, ]
+
+# Crear el Volcano Plot
+library(ggplot2)
+
+ggplot(results, aes(x = fold_change, y = neg_log10_p_value)) +
+  geom_point(aes(color = adjusted_p_value < 0.05), size = 2) +  # Colorear por significancia (p-valor ajustado < 0.05)
+  scale_color_manual(values = c("gray", "red")) +  # Gris para no significativos, rojo para significativos
+  theme_minimal() +
+  labs(title = "Volcano Plot of Metabolites",
+       x = "Log2 Fold Change (Male/Female)",
+       y = "-Log10(Adjusted p-value)") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))  # Mejora la legibilidad del eje X
+
+# Filtrar y mostrar los metabolitos significativos
+print(significant_metabolites)
+
+```
+
+
+
+
+# Week 4: Install the mixomics workpackage in R. Run the tutorials and examples. Get familiar with the code. Implement a PLS-DA classifier in mixomics using the training- test partition that you initially decided. Calculate a confusion matrix and a classification rate
+
+```{r, warning=FALSE}
+library(mixOmics)
+# Open mixOmics tutorials and examples
+#browseVignettes("mixOmics")
+
+# Convert Y to a factor for classification
+Y <- factor(Y)
+
+# Set seed for reproducibility
+set.seed(123)
+
+# Train the PLS-DA model
+plsda_model <- plsda(as.matrix(X), Y, ncomp = 5)
+
+# Perform cross-validation on the training set to determine the optimal number of components
+cross_validation <- perf(plsda_model, validation = "Mfold", folds = 6)
+
+#Confusion matrix
+predictions_mfold <- cross_validation$predict
+
+# Extract scores of component 1
+component1_scores <- predictions_mfold$comp1
+
+# Extract predicted classes for the first component (comp1)
+predicted_classes_comp1 <- cross_validation$class$max.dist[, 1, 1]  # First dimension: samples, second: repetition, third: component
+
+# Create a confusion matrix comparing predicted classes with actual values
+confusion_matrix_comp1 <- table(Predicted = predicted_classes_comp1, Actual = Y)
+print("Confusion Matrix for Component 1:")
+print(confusion_matrix_comp1)
+
+# Calculate classification accuracy for component 1
+accuracy_comp1 <- sum(diag(confusion_matrix_comp1)) / sum(confusion_matrix_comp1)
+print(paste("Classification Accuracy for Component 1:", round(accuracy_comp1 * 100, 2), "%"))
+# Visualize the PLS-DA results for the first component
+plotIndiv(plsda_model, comp = c(1,2), group = Y, legend = TRUE, title = "PLS-DA with Component 1 Scores")
+
+#EXTRA
+# Load ggplot2 for visualization
+library(ggplot2)
+
+# Extract scores for the first component
+scores <- plsda_model$variates$X[, 1]  # Scores for component 1
+group <- Y  # Actual groups (gender: 1 or 2)
+
+# Create a data frame for ggplot2
+data_plot <- data.frame(Component1 = scores, Group = group)
+
+# Create a box plot to visualize distribution of Component 1 scores
+ggplot(data_plot, aes(x = Group, y = Component1, fill = Group)) +
+  geom_boxplot() +
+  labs(title = "Box Plot of Component 1 Scores by Group", x = "Group", y = "Component 1 Score") +
+  theme_minimal() +
+  scale_fill_manual(values = c("blue", "red")) +
+  theme(legend.title = element_blank())
+
+# Create a density plot to visualize Component 1 scores distribution
+ggplot(data_plot, aes(x = Component1, fill = Group)) +
+  geom_density(alpha = 0.5) +
+  labs(title = "Density Plot of Component 1 Scores", x = "Component 1 Score", y = "Density") +
+  theme_minimal() +
+  scale_fill_manual(values = c("blue", "red")) +
+  theme(legend.title = element_blank())
+
+```
+# Week 5: Research how can you change your figure of merit to be the AUROC. Calculate the ROC curve and AUROC in external validation. Look at the impact on the number of samples in external validation
+
+```{r}
+library(pROC)
+
+test_probabilities <- predict(plsda_model, as.matrix(X.test), type = "prob")$predict
+# Calculate ROC curve 
+ROC <- roc(Y.test, as.numeric(test_probabilities[, 2, 1]))
+plot(ROC, col = "blue")
+
+# Calculate AUROC
+auc_value <- auc(ROC)
+cat("AUROC:", round(auc_value, 3), "\n")
+```
+
+```{r}
+# Sensitivity Analysis: Impact of Sample Size
+sample_sizes <- seq(0.1, 1.0, by = 0.1)  # Proportions of the dataset
+auroc_values <- c()
+
+for (size in sample_sizes) {
+  # Randomly sample a subset of test data
+  sampled_indices <- sample(1:nrow(X.test), size = floor(size * nrow(X.test)))
+  sampled_X <- X.test[sampled_indices, ]
+  sampled_Y <- Y.test[sampled_indices]
+  
+  # Predict probabilities and calculate AUROC
+  sampled_probabilities <- predict(plsda_model, sampled_X, type = "prob")$predict
+  sampled_roc <- roc(sampled_Y, as.numeric(sampled_probabilities[, 2, 2]))
+  auroc_values <- c(auroc_values, auc(sampled_roc))
+}
+
+# Plot AUROC vs. Sample Size
+plot(sample_sizes, auroc_values, type = "b", col = "red", pch = 19,
+     xlab = "Proportion of Test Data Used", ylab = "AUROC",
+     main = "Impact of Sample Size on AUROC")
+grid()
+```
+```{r}
+library(class)
+```
+
+```{r}
+set.seed(123) # to get always the same result
+
+# Define a range of k values to test
+k_values <- seq(1, 20, by = 1)  # Test k from 1 to 20
+auroc_values <- numeric(length(k_values))  # Store AUROC for each k
+
+# Loop through each k value
+for (i in seq_along(k_values)) {
+  # Perform kNN
+  k_predictions <- knn(
+    train = X.training,
+    test = X.test, 
+    cl = Y.training,           # Training labels
+    k = k_values[i]            # Number of neighbors
+  )
+  
+  # Convert predictions to binary probabilities for ROC
+  k_prob <- ifelse(k_predictions == "2", 1, 0)  # Positive class = "2"
+  
+  # Compute AUROC
+  k_roc <- roc(Y.test, k_prob)
+  auroc_values[i] <- auc(k_roc)
+}
+
+# Find the best k
+best_k <- k_values[which.max(auroc_values)]
+cat("Best k:", best_k, "with AUROC:", round(max(auroc_values), 3), "\n")
+
+# Plot AUROC vs k
+plot(k_values, auroc_values, type = "b", col = "red", pch = 19,
+     xlab = "Number of Neighbors (k)", ylab = "AUROC",
+     main = "Effect of k on AUROC")
+grid()
+
+```
+```{r}
+# Perform kNN with k = 20
+k_20 <- knn(train = X.training,  
+  test = X.test,     
+  cl = Y.training,          # Training labels
+  k = 20                   # Number of neighbors
+)
+```
+
+```{r}
+k_20_prob <- as.numeric(k_20)
+k_20_prob <- ifelse(k_20 == "2", 1, 0)
+
+k_20_roc <- roc(Y.test, k_20_prob)
+plot(k_20_roc, col = "blue", main = "kNN ROC Curve (k = 20)")
+k_20_auc <- auc(k_20_roc)
+cat("kNN AUROC (k = 20):", round(k_20_auc, 3), "\n")
+```
+
+```{r}
+# Compute ROC curve for k = 20
+k_20_roc <- roc(Y.test, k_20_prob)
+
+# Compute ROC curve for the other model
+ROC <- roc(Y.test, as.numeric(test_probabilities[, 2, 1]))
+
+# Plot the ROC curves
+plot(k_20_roc, col = "blue", main = "Comparison of ROC Curves", lwd = 2, legacy.axes = TRUE)
+lines(ROC, col = "red", lwd = 2)  # Add the second ROC curve
+
+# Add legend
+legend("bottomright", legend = c("kNN (k = 20)", "PLSDA"),
+       col = c("blue", "red"), lwd = 2)
+```
+
+```{r}
+library(randomForest)  # For Random Forest
+library(pROC)          # For ROC curves and AUROC
+
+# Random Forest Model
+set.seed(123)  # For reproducibility
+rf_model <- randomForest(X.training, as.factor(Y.training), ntree = 100)
+
+# Predict probabilities for Random Forest
+rf_prob <- predict(rf_model, X.test, type = "prob")[, 2]  # Probabilities for class "2"
+
+# Compute ROC curve for Random Forest
+rf_roc <- roc(Y.test, rf_prob)
+
+# PLS-DA 
+plsda_roc <- roc(Y.test, as.numeric(test_probabilities[, 2, 1]))
+
+# kNN with k = 20
+k_20_roc <- roc(Y.test, k_20_prob)
+
+# Plot all ROC curves together
+plot(k_20_roc, col = "blue", main = "ROC Curve Comparison", lwd = 2, legacy.axes = TRUE)
+lines(plsda_roc, col = "red", lwd = 2)
+lines(rf_roc, col = "green", lwd = 2)
+
+# Add legend
+legend("bottomright", legend = c("kNN (k = 20)", "PLS-DA", "Random Forest"),
+       col = c("blue", "red", "green"), lwd = 2)
+
+# Print AUROC values for each model
+cat("kNN (k = 20) AUROC:", auc(k_20_roc), "\n")
+cat("PLS-DA AUROC:", auc(plsda_roc), "\n")
+cat("Random Forest AUROC:", auc(rf_roc), "\n")
+
+```
+
+
+# Week 6. Find a way to compute a Feature Ranking based on VIP scores. Check if the higher VIPs do match or not the results of the hypothesis testing.
+
+```{r}
+# Load mixOmics library
+library(mixOmics)
+
+# Compute VIP scores from the trained PLS-DA model
+vip_scores <- vip(plsda_model)
+
+# Create a data frame for ranking features by VIP scores
+vip_df <- data.frame(
+  Metabolite = rownames(vip_scores),
+  VIP = vip_scores[, 1]  # Use the first component (or aggregate if needed)
+)
+
+# Rank features by VIP score (descending order)
+vip_df <- vip_df[order(-vip_df$VIP), ]
+print(head(vip_df, 10))  # View the top 10 features
+
+# Filter features with VIP > 1 (commonly used threshold)
+important_features_vip <- vip_df[vip_df$VIP > 1, ]
+
+cat("Number of important features (VIP > 1):", nrow(important_features_vip), "\n")
+print(important_features_vip)
+
+# Compare with hypothesis testing results
+significant_features_hypothesis <- significant_metabolites$metabolite
+
+# Check overlap between VIP-selected and hypothesis-testing-selected features
+overlap <- intersect(important_features_vip$Metabolite, significant_features_hypothesis)
+
+cat("Number of overlapping features:", length(overlap), "\n")
+print(overlap)
+
+```
+```{r}
+library(eulerr)
+
+# Prepare input sets
+sets <- list(
+  VIP = important_features_vip$Metabolite,
+  Hypothesis = significant_features_hypothesis
+)
+
+# Create Euler/Venn diagram
+plot(euler(sets), fills = c("skyblue", "purple"), alpha = 0.5,
+     labels = c("VIP > 1", "Significant Hypothesis"), font = 1.5)
+
+```
+
+
+
+```{r}
+# Optional: Correlation between VIP scores and p-values
+combined_data <- merge(vip_df, results, by.x = "Metabolite", by.y = "metabolite", all.x = TRUE)
+correlation <- cor(combined_data$VIP, -log10(combined_data$adjusted_p_value), use = "complete.obs")
+
+cat("Correlation between VIP scores and -log10(adjusted p-value):", round(correlation, 3), "\n")
+
+# Scatter plot of VIP scores vs. p-values
+library(ggplot2)
+ggplot(combined_data, aes(x = VIP, y = -log10(adjusted_p_value))) +
+  geom_point() +
+  geom_smooth(method = "lm", col = "red") +
+  labs(title = "VIP Scores vs. -log10(Adjusted P-Values)",
+       x = "VIP Score",
+       y = "-log10(Adjusted P-Value)") +
+  theme_minimal()
+```
+
+# Week 7: Implement a recursive feature elimination method and train a model with a reduced set of features. Find the most predictive set of metabolites to discriminate sex in urine analysis. Compute the final figure of merit of your choice and compare with the initial model with all the features
+
+* Implement Recursive Feature Elimination
+* Train a final model with optimal featureS
+* Validate the results in external validation
+* Calculate Figure of Merit Uncertainty
+* Compare Performance (Full vs Reduced Feature Set)
+
+1. Perform Recursive Feature Elimination (RFE)
+To begin, we'll use the caret package's rfe function, which allows you to perform RFE with a custom resampling method (like cross-validation) to select the most important features.
+
+```{r}
+# === Setup: Load and Install Required Packages ===
+# Install required packages if they are not already installed
+if (!requireNamespace("caret", quietly = TRUE)) install.packages("caret")
+if (!requireNamespace("pls", quietly = TRUE)) install.packages("pls")
+if (!requireNamespace("doParallel", quietly = TRUE)) install.packages("doParallel")
+
+# Load the necessary libraries
+library(caret)
+library(pls)
+library(doParallel)
+
+# === Data Preparation ===
+# Assuming you have your data split into training and test sets: X.training, Y.training, X.test, Y.test
+# Convert data to data frames if they are not already
+X.training_df <- as.data.frame(X.training)
+X.test_df <- as.data.frame(X.test)
+
+# === Set Up Parallel Processing ===
+# Set up parallel processing (use all available cores minus one)
+cl <- makeCluster(detectCores() - 1)  # Create a cluster with available cores
+registerDoParallel(cl)                # Register the cluster for parallel processing
+
+# === Set Up RFE Control ===
+# Configure the control object for RFE with 5-fold cross-validation
+ctrl <- rfeControl(functions = rfFuncs, method = "cv", number = 5)
+
+# === Run Recursive Feature Elimination (RFE) ===
+# Set seed for reproducibility
+set.seed(123)
+
+# Run RFE on the training set
+rfe_results <- rfe(
+  X.training_df, 
+  Y.training, 
+  sizes = c(5, 10, 15, 20),  # Define feature set sizes to test
+  rfeControl = ctrl
+)
+
+# === Review and Plot RFE Results ===
+# Print RFE results
+print(rfe_results)
+
+
+# Plot RFE performance over subset sizes without conflicting 'ylab' argument
+plot(rfe_results, type = "o", col = "blue", 
+     main = "RFE Performance", 
+     xlab = "Number of Features", 
+     grid = TRUE)  # Adding grid for better visualization
+
+# === Clean Up Parallel Processing ===
+# Stop the parallel processing cluster
+stopCluster(cl)
+registerDoSEQ()  # Revert back to sequential processing
+```
+
+2. Train a PLS-DA Model with the Selected Optimal Features
+Once we have the optimal number of features from RFE, we can use them to train a new PLS-DA model. Let’s train a model with the selected features and evaluate its performance.
+
+```{r}
+# Ensure Y.test is a factor
+Y.test <- factor(Y.test)
+
+# Selected features from RFE
+optimal_features <- c("X22", "X141", "X180", "X113", "X278")
+cat("Selected Features from RFE: ", optimal_features, "\n")
+
+# Subset the training data with the selected features
+X.training_reduced <- X.training_df[, optimal_features]
+
+# Train the PLS-DA model on the reduced feature set
+plsda_reduced_model <- plsda(X.training_reduced, Y.training, ncomp = 2)
+
+vip_scores <- vip(plsda_reduced_model)
+
+# View the first few VIP scores
+head(vip_scores)
+
+# Prepare the test data with the selected features
+X.test_reduced <- X.test_df[, optimal_features]
+
+# Predict using the reduced model
+predictions_reduced <- predict(plsda_reduced_model, X.test_reduced)
+
+# Extract the predicted class labels (the class with the highest probability)
+predicted_classes_reduced <- predictions_reduced$class$max.dist[, 1]
+
+# Ensure that the predicted classes are a factor with the same levels as Y.test
+predicted_classes_reduced <- factor(predicted_classes_reduced, levels = levels(Y.test))
+
+# Now you can calculate the confusion matrix and other metrics
+conf_matrix_reduced <- confusionMatrix(predicted_classes_reduced, Y.test)
+print(conf_matrix_reduced)
+
+# Extract classification rate (accuracy) for the reduced model
+classification_rate_reduced <- conf_matrix_reduced$overall['Accuracy']
+cat("Classification Rate for Reduced Feature Set:", round(classification_rate_reduced * 100, 2), "%\n")
+
+```
+
+3. Evaluate AUROC for the Reduced Feature Set
+In addition to the classification accuracy, we can evaluate the AUROC to assess the model’s performance in distinguishing between classes (Male vs Female).
+```{r}
+# Calculate probabilities for the reduced feature model
+test_probabilities_reduced <- predict(plsda_reduced_model, X.test_reduced, type = "prob")$predict
+
+# Calculate the ROC curve and AUROC
+ROC_reduced <- roc(Y.test, as.numeric(test_probabilities_reduced[, 2, 1]))
+plot(ROC_reduced, col = "blue", main = "ROC Curve for Reduced Feature Set")
+
+# Calculate AUROC
+auc_value_reduced <- auc(ROC_reduced)
+cat("AUROC for Reduced Feature Set:", round(auc_value_reduced, 3), "\n")
+```
+
+4. Compare Performance (Full Feature Set vs Reduced Feature Set)
+Now compare the performance of the initial PLS-DA model (using all features) and the reduced feature set.
+```{r}
+# Initial PLS-DA model with all features (for comparison)
+plsda_full_model <- plsda(X.training, Y.training, ncomp = 2)
+test_probabilities_full <- predict(plsda_full_model, X.test, type = "prob")$predict
+ROC_full <- roc(Y.test, as.numeric(test_probabilities_full[, 2, 1]))
+
+# Calculate AUROC for the full feature model
+auc_value_full <- auc(ROC_full)
+cat("AUROC for Full Feature Set:", round(auc_value_full, 3), "\n")
+
+# Compare AUROC between full and reduced models
+cat("AUROC for Full Model:", round(auc_value_full, 3), "\n")
+cat("AUROC for Reduced Model:", round(auc_value_reduced, 3), "\n")
+```
+
+5. Calculate Additional Figures of Merit (Accuracy, Error Rate, AUC)
+After comparing the models, we will calculate important figures of merit to assess the models' performances:
+```{r}
+# Extract numeric labels from the predicted class names
+predicted_classes_reduced <- gsub("[^0-9]", "", predicted_classes_reduced)
+
+# Convert the labels to factors to match Y.test
+predicted_classes_reduced <- factor(predicted_classes_reduced, levels = levels(Y.test))
+
+# Verify the changes
+head(predicted_classes_reduced)
+
+# Recalculate confusion matrix
+conf_matrix_reduced <- confusionMatrix(predicted_classes_reduced, Y.test)
+print(conf_matrix_reduced)
+
+# Accuracy
+accuracy_reduced <- conf_matrix_reduced$overall['Accuracy']
+cat("Accuracy for Reduced Feature Set:", round(accuracy_reduced * 100, 2), "%\n")
+
+# Error Rate
+error_rate <- 1 - accuracy_reduced
+cat("Error Rate for Reduced Feature Set:", round(error_rate * 100, 2), "%\n")
+
+# AUROC
+auc_value_reduced
+```
+
+```{r}
+library(pROC)
+# ROC curve for the Full Model (using all features)
+test_probabilities_full <- predict(plsda_full_model, X.test, type = "prob")$predict
+ROC_full <- roc(Y.test, as.numeric(test_probabilities_full[, 2, 1]))
+
+# ROC curve for the Reduced Model (using selected features)
+test_probabilities_reduced <- predict(plsda_reduced_model, X.test_reduced, type = "prob")$predict
+ROC_reduced <- roc(Y.test, as.numeric(test_probabilities_reduced[, 2, 1]))
+
+# Plot both ROC curves on the same graph for comparison
+plot(ROC_full, col = "blue", main = "ROC Curve Comparison (Full vs Reduced)", 
+     lwd = 2, xlim = c(0, 1), ylim = c(0, 1))
+plot(ROC_reduced, col = "red", lwd = 2, add = TRUE)
+
+# Add a legend
+legend("bottomright", legend = c("Full Feature Set", "Reduced Feature Set"),
+       col = c("blue", "red"), lwd = 2)
+
+```
+
+```{r}
+# Extract VIP scores
+
+
+# Create a data frame with metabolites and their VIP scores
+vip_df <- data.frame(Metabolite = rownames(vip_scores), VIP = vip_scores[, 1])  # Use the first component if ncomp > 1
+
+# Rank metabolites by VIP score (descending order)
+vip_df_sorted <- vip_df[order(-vip_df$VIP), ]
+
+# View the top 10 metabolites with highest VIP scores
+head(vip_df_sorted, 5)
+# Filter metabolites with VIP > 1 (common threshold for importance)
+important_metabolites <- vip_df_sorted[vip_df_sorted$VIP > 1, ]
+
+# Print the important metabolites
+print(important_metabolites)
+# Visualize the VIP scores
+library(ggplot2)
+
+ggplot(vip_df_sorted, aes(x = reorder(Metabolite, -VIP), y = VIP)) +
+  geom_bar(stat = "identity", fill = "skyblue") +
+  coord_flip() + 
+  labs(title = "VIP Scores of Metabolites (RFE PLS-DA)", x = "Metabolite", y = "VIP Score") +
+  theme_minimal() +theme(axis.text.x = element_text(hjust = 1))+
+  theme(axis.text.y = element_text(size = 12))
+
+```
+
+```{r}
+# Load necessary library
+library(ggplot2)
+
+# Filter significant metabolites based on adjusted p-value < 0.05
+significant_metabolites <- results[results$adjusted_p_value < 0.05, ]
+
+# Sort the significant metabolites by their adjusted p-value (smallest to largest)
+significant_metabolites_sorted <- significant_metabolites[order(significant_metabolites$adjusted_p_value), ]
+
+# Select the top 5 most significant metabolites
+top_5_metabolites <- head(significant_metabolites_sorted, 5)
+
+# Create a bar plot of the top 5 significant metabolites based on adjusted p-value
+ggplot(top_5_metabolites, aes(x = reorder(metabolite, adjusted_p_value), y = -log10(adjusted_p_value))) +
+  geom_bar(stat = "identity", fill = "skyblue") +
+  coord_flip() +  # Flip coordinates to make the plot more readable
+  labs(title = "Top 5 Significant Metabolites (FDR Adjusted P-Values)",
+       x = "Metabolite",
+       y = "-log10(Adjusted P-value)") +
+  theme_minimal() +
+  theme(axis.text.y = element_text(size = 12))  # Increase text size for Y-axis labels
+
+
+```
